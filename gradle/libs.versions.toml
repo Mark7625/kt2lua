@@ -1,0 +1,10 @@
+[versions]
+# Single source of truth for the Kotlin/JDK versions every module in this repo builds
+# against — both the main build (settings.gradle.kts) and the build-logic composite build
+# (build-logic/settings.gradle.kts) point their version catalog at *this* file, so there's
+# nowhere else a version number can drift out of sync.
+kotlin = "2.3.0"
+jdk = "17"
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
