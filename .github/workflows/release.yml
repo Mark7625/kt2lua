@@ -1,0 +1,83 @@
+name: release
+
+# Run this by hand to start a release. It picks the version (the next patch unless you give one), sets it
+# in gradle.properties and the README on a release/<version> branch and opens a pull request.
+# Nothing is published until you merge that pull request; publish.yml does that.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release (default - gradle.properties, bumped if already released)
+        type: string
+        default: ""
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Choose the version
+        id: version
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          if [ -n "$REQUESTED" ]; then
+            version="$REQUESTED"
+          else
+            current=$(grep '^version=' gradle.properties | cut -d= -f2)
+            last=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//' || true)
+            version="$current"
+            if [ "$last" = "$current" ]; then
+              if ! echo "$current" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+                echo "cannot bump '$current'; pass a version" >&2
+                exit 1
+              fi
+              IFS=. read -r major minor patch <<< "$current"
+              version="$major.$minor.$((patch + 1))"
+            fi
+          fi
+          if ! echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "'$version' is not a version like 1.2.3" >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
+            echo "v$version is already released" >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --heads origin "release/$version" >/dev/null 2>&1; then
+            echo "release/$version already exists; merge or close its pull request first" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Open the release pull request
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "release/$VERSION
+
+Made with [Cursor](https://cursor.com)"
+          bash .github/scripts/sync-version.sh "$VERSION"
+          git add gradle.properties README.md
+          git commit --trailer "Co-authored-by: Cursor <cursoragent@cursor.com>" -m "chore: release v$VERSION" --allow-empty
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/release/$VERSION"
+          gh pr create --head "release/$VERSION" --base "$DEFAULT_BRANCH" \
+            --title "Release v$VERSION" \
+            --body "Merging this publishes **v$VERSION** to Maven Central, tags it and creates the GitHub release."

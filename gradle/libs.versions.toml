@@ -1,8 +1,8 @@
 [versions]
-# Shared Kotlin plugin and JDK versions for every module, including nested API/example
-# modules. The root build applies the JDK toolchain and bytecode targets recursively.
 kotlin = "2.3.0"
 jdk = "17"
+maven-publish = "0.37.0"
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "maven-publish" }

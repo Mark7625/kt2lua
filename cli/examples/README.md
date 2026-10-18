@@ -17,4 +17,4 @@ cli/build/install/cli/bin/cli cli/examples/hello.kt --run
 `--run` transpiles and executes with kt2lua's own interpreter. Drop it to just transpile.
 
 For a real RS3 plugin example, see
-[`libs/runescape/examples/prettyui-window-kotlin`](../../libs/runescape/examples/prettyui-window-kotlin).
+[`RuneScapePluginKt`](https://github.com/Mark7625/RuneScapePluginKt).

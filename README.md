@@ -15,25 +15,24 @@ what's not, and what's planned next.
 
 ## Add it to your project
 
-Not published to a registry yet — use it as a composite build:
-
-```kotlin
-// settings.gradle.kts
-pluginManagement {
-    includeBuild("path/to/kt2lua")
-}
-```
+Published to Maven Central under `io.github.mark7625`:
 
 ```kotlin
 // build.gradle.kts
 plugins {
-    id("kt2lua.transpile")
+    id("io.github.mark7625.kt2lua") version "0.1.0"
 }
 
 kt2lua {
     sourceDir.set(layout.projectDirectory.dir("src/main/kotlin-scripts"))
     outputDir.set(layout.buildDirectory.dir("generated/kt2lua"))
 }
+```
+
+To use the transpiler, interpreter and CLI as a library instead:
+
+```kotlin
+implementation("io.github.mark7625:kt2lua:0.1.0")
 ```
 
 This registers a `transpileKotlinToLua` task that transpiles every `.kt` file under `sourceDir`
@@ -64,8 +63,6 @@ needed).
 - `cli` — standalone command-line tool
 - `test-runner` — end-to-end tests (transpile, run, diff output)
 - `cli/examples` — small Kotlin → Lua demos
-- `libs/runescape` — RS3 API bindings, unrelated to kt2lua itself (see its own README)
-
 ## Building
 
 ```
