@@ -142,8 +142,9 @@ kt2lua {
 }
 ```
 
-This registers a `transpileKotlinToLua` task that transpiles every `.kt` file in `sourceDir`
-into a `.lua` file in `outputDir`.
+This registers a `transpileKotlinToLua` task that transpiles every `.kt` file under `sourceDir`
+(recursively) into a `.lua` file in `outputDir`, preserving `sourceDir`'s own subdirectory
+layout — a package's folder structure carries straight through instead of flattening.
 
 ## Using the CLI directly
 
@@ -184,6 +185,19 @@ as an ambient global, same as single-file mode — this only ever auto-requires 
 *matches* a known sibling declaration, never guesses. A name declared at the top level of more
 than one input file is ambiguous and is never auto-required for either, on purpose (see
 `transpileProject`'s doc comment).
+
+### A whole directory at once (preserves the package layout)
+
+```
+cli/build/install/cli/bin/cli src/main/kotlin -o distDir/
+```
+
+Passing a single *directory* instead of individual files recursively discovers every `.kt` file
+under it and transpiles them all together (same cross-file auto-`require` as above), but keys
+each file by its path *relative to that directory* rather than just its base name — so
+`src/main/kotlin/pkg/Thing.kt` becomes `distDir/pkg/Thing.lua`, and sibling files `require` it as
+`"pkg/Thing"`. A Kotlin package's directory structure carries straight through to the generated
+Lua instead of every file flattening into one output directory.
 
 The same logic also now backs `TranspileTask` (the Gradle plugin's `transpileKotlinToLua` task),
 which already processed a whole `sourceDir` per invocation — it's always been able to see every

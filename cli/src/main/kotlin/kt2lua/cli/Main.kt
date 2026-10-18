@@ -10,6 +10,8 @@ import kt2lua.transpiler.EmitStyle
 import kt2lua.transpiler.LexException
 import kt2lua.transpiler.ParseException
 import kt2lua.transpiler.ProjectFile
+import kt2lua.transpiler.ProjectTranspileResult
+import kt2lua.transpiler.discoverProjectFiles
 import kt2lua.transpiler.transpile
 import kt2lua.transpiler.transpileProject
 import java.io.File
@@ -100,7 +102,10 @@ fun main(args: Array<String>) {
         }
     }
 
-    if (inputPaths.size == 1) {
+    if (inputPaths.size == 1 && File(inputPaths[0]).isDirectory) {
+        if (run) usageError("--run isn't supported when transpiling a directory (no single entry point to run)")
+        transpileDirectory(inputPaths[0], outputPath, style)
+    } else if (inputPaths.size == 1) {
         transpileSingleFile(inputPaths[0], outputPath, run, style)
     } else {
         if (run) usageError("--run isn't supported with multiple input files (no single entry point to run)")
@@ -156,7 +161,24 @@ private fun transpileProjectFiles(inputPaths: List<String>, outputPath: String?,
     val projectFiles = inputPaths.map { path ->
         ProjectFile(File(path).nameWithoutExtension, File(path).readText())
     }
-    val result = try {
+    writeProject(projectFiles, outputPath, style)
+}
+
+/**
+ * Transpiles every `.kt` file under [dirPath], recursively — the whole-package-tree
+ * counterpart of [transpileProjectFiles]. A file's path relative to [dirPath] (minus `.kt`,
+ * slash-separated) becomes its [ProjectFile.name], so `<dirPath>/pkg/Thing.kt` ends up at
+ * `<outDir>/pkg/Thing.lua`: the Kotlin source's directory layout carries straight through to
+ * the generated Lua, instead of every file flattening into one directory.
+ */
+private fun transpileDirectory(dirPath: String, outputPath: String?, style: EmitStyle) {
+    val projectFiles = discoverProjectFiles(File(dirPath))
+    if (projectFiles.isEmpty()) usageError("No .kt files found under $dirPath")
+    writeProject(projectFiles, outputPath, style)
+}
+
+private fun writeProject(projectFiles: List<ProjectFile>, outputPath: String?, style: EmitStyle) {
+    val result: ProjectTranspileResult = try {
         transpileProject(projectFiles, style)
     } catch (e: Exception) {
         System.err.println("kt2lua: ${e.message ?: e.toString()}")
@@ -166,6 +188,7 @@ private fun transpileProjectFiles(inputPaths: List<String>, outputPath: String?,
     outDir.mkdirs()
     for ((name, code) in result.files) {
         val outFile = outDir.resolve("$name.lua")
+        outFile.parentFile?.mkdirs()
         outFile.writeText(code)
         println("Wrote ${outFile.path}")
     }
@@ -206,6 +229,8 @@ private fun printHelp() {
           kt2lua <input.kt> [options]              Transpile one file
           kt2lua <input.kt...> [options]           Transpile several files together,
                                                     auto-requiring cross-file references
+          kt2lua <source-dir> [options]            Transpile every .kt file under a directory,
+                                                    preserving its subdirectory layout
           kt2lua <input.lua> [--mock-globals ...]  Run a Lua file directly
           kt2lua -h | --help                       Show this help message
           kt2lua -v | --version                    Show the version number
@@ -214,12 +239,17 @@ private fun printHelp() {
         input, same as the Gradle plugin's own build/generated/kt2lua convention) - pass
         -o/--out to write somewhere else instead.
 
-        Transpiling several files together lets the transpiler see every file's top-level
-        declarations at once: a reference in one file to a name declared at the top level of
-        another (an `object`, a non-private top-level `fun`/`val`/`var`, a `class`) gets a
-        `require(...)` call inserted automatically, instead of needing one written by hand.
-        Anything that isn't any input file's own top-level declaration is still treated as an
-        ambient global, same as single-file mode.
+        Transpiling several files (or a whole directory) together lets the transpiler see
+        every file's top-level declarations at once: a reference in one file to a name
+        declared at the top level of another (an `object`, a non-private top-level
+        `fun`/`val`/`var`, a `class`) gets a `require(...)` call inserted automatically,
+        instead of needing one written by hand. Anything that isn't any input file's own
+        top-level declaration is still treated as an ambient global, same as single-file mode.
+
+        Passing a directory discovers every .kt file under it recursively and mirrors its
+        subdirectory layout in the output: src/pkg/Thing.kt becomes <outDir>/pkg/Thing.lua,
+        and sibling files require() it by that same path - so a Kotlin package's folder
+        structure carries straight through to the generated Lua instead of flattening.
 
         Running a .lua file resolves require(...) to sibling .lua files relative to its
         directory. --mock-globals pre-defines the given global names as auto-stub values
@@ -234,8 +264,8 @@ private fun printHelp() {
         keys, falls back to kt2lua's own default for whatever it doesn't set.
 
         Options:
-          -o, --out <path>        Output file (single input) or directory (multiple inputs);
-                                   defaults to build/dist
+          -o, --out <path>        Output file (single file input) or directory (multiple
+                                   inputs / directory input); defaults to build/dist
           --run                    Execute the generated Lua with kt2lua's own built-in
                                    interpreter (single input only)
           --mock-globals <names>   Comma-separated global names to auto-stub (.lua mode only)
@@ -247,6 +277,7 @@ private fun printHelp() {
         Examples:
           kt2lua hello.kt --run
           kt2lua Main.kt ModuleWindow.kt -o build/dist
+          kt2lua src/main/kotlin -o build/dist
           kt2lua build/dist/main.lua --mock-globals Plugin,Event,GameState
         """.trimIndent()
     )

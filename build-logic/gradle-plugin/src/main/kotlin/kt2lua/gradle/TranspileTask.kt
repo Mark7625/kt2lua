@@ -1,7 +1,7 @@
 package kt2lua.gradle
 
 import kt2lua.transpiler.EmitStyle
-import kt2lua.transpiler.ProjectFile
+import kt2lua.transpiler.discoverProjectFiles
 import kt2lua.transpiler.transpileProject
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
@@ -14,9 +14,11 @@ import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 
-/** Transpiles every `.kt` file in [sourceDir] into a matching `.lua` file in [outputDir].
- * Processes them all together via [transpileProject], so a reference in one file to another
- * file's top-level declaration gets a `require(...)` call inserted automatically. */
+/** Transpiles every `.kt` file under [sourceDir] (recursively) into a matching `.lua` file
+ * under [outputDir], preserving [sourceDir]'s subdirectory layout — a package's directory
+ * structure carries straight through. Processes them all together via [transpileProject], so a
+ * reference in one file to another file's top-level declaration gets a `require(...)` call
+ * inserted automatically. */
 abstract class TranspileTask : DefaultTask() {
 
     @get:InputDirectory
@@ -42,14 +44,14 @@ abstract class TranspileTask : DefaultTask() {
         val srcDir = sourceDir.get().asFile
         val outDir = outputDir.get().asFile
         outDir.mkdirs()
-        val ktFiles = srcDir.listFiles { f -> f.isFile && f.extension == "kt" }?.sortedBy { it.name } ?: emptyList()
-        val projectFiles = ktFiles.map { ProjectFile(it.nameWithoutExtension, it.readText()) }
+        val projectFiles = discoverProjectFiles(srcDir)
         val style = EmitStyle.load(styleFile.orNull?.asFile)
         val result = transpileProject(projectFiles, style)
-        for (ktFile in ktFiles) {
-            val code = result.files[ktFile.nameWithoutExtension] ?: continue
-            outDir.resolve("${ktFile.nameWithoutExtension}.lua").writeText(code)
-            logger.lifecycle("kt2lua: transpiled ${ktFile.name} -> ${ktFile.nameWithoutExtension}.lua")
+        for ((name, code) in result.files) {
+            val outFile = outDir.resolve("$name.lua")
+            outFile.parentFile?.mkdirs()
+            outFile.writeText(code)
+            logger.lifecycle("kt2lua: transpiled $name.kt -> $name.lua")
         }
     }
 }
