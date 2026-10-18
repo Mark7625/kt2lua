@@ -67,12 +67,13 @@ jobs:
       - name: Push version to main and production
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -- .
 
-          for branch in main production; do
+          for branch in "$DEFAULT_BRANCH" production; do
             git fetch origin "$branch"
             git checkout -B "$branch" "origin/$branch"
             bash .github/scripts/sync-version.sh "$VERSION"
