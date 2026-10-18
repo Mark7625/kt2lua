@@ -90,10 +90,13 @@ jobs:
           fi
           git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/release/$VERSION"
 
+          last=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
           {
             echo "Merging this publishes **v$VERSION** to Maven Central, tags it and creates the GitHub release."
             echo
             echo "### Changes"
+            echo
+            echo "[Full diff from ${last:-$DEFAULT_BRANCH} to release/$VERSION](https://github.com/$GITHUB_REPOSITORY/compare/${last:-$DEFAULT_BRANCH}...release/$VERSION)"
             echo
             git log "origin/$DEFAULT_BRANCH..HEAD" --reverse --format='- %s' | grep -v '^- chore: release v' || true
           } > pr-body.md
