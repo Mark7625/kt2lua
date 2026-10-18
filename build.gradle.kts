@@ -47,7 +47,7 @@ configure(listOf(project(":cli"), project(":all"))) {
 project(":all") {
     plugins.withId("com.vanniktech.maven.publish") {
         extensions.configure<MavenPublishBaseExtension> {
-            publishToMavenCentral()
+            publishToMavenCentral(automaticRelease = true)
             if (providers.gradleProperty("signingInMemoryKey").isPresent) {
                 signAllPublications()
             }
