@@ -4,8 +4,8 @@ plugins {
 }
 
 dependencies {
-    implementation("kt2lua:transpiler:0.1.0")
-    implementation("kt2lua:interpreter:0.1.0")
+    implementation(project(":transpiler"))
+    implementation(project(":interpreter"))
 }
 
 application {

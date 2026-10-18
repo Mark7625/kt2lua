@@ -9,14 +9,20 @@ plugins {
 // Every subproject builds against the exact same JDK, not just the same bytecode *target* —
 // `jvmToolchain(...)` pins the actual compiler/JDK used (Gradle provisions/selects it), rather
 // than just asking whatever JDK happens to be running Gradle to emit older bytecode. The
-// version itself comes from gradle/libs.versions.toml, the one place it's declared (also read
-// by build-logic's own settings.gradle.kts, a separate Gradle build, for the same reason).
+// version itself comes from gradle/libs.versions.toml, the one place it's declared.
 subprojects {
     plugins.withId("org.jetbrains.kotlin.jvm") {
         extensions.configure<KotlinJvmProjectExtension> {
             jvmToolchain(libs.versions.jdk.get().toInt())
         }
     }
+}
+
+// kt2lua's own publishable modules share one group/version, declared once here instead of once
+// per module.
+configure(listOf(project(":common"), project(":transpiler"), project(":interpreter"), project(":gradle-plugin"))) {
+    group = "kt2lua"
+    version = "0.1.0"
 }
 
 // The three independently-published `runescape-*` API binding modules share everything about

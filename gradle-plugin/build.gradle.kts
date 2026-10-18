@@ -1,4 +1,4 @@
-// group/version come from build-logic/build.gradle.kts's subprojects block.
+// group/version come from the root build.gradle.kts's kt2lua-modules configure block.
 plugins {
     alias(libs.plugins.kotlin.jvm)
     `java-gradle-plugin`
