@@ -10,9 +10,10 @@ data class ProjectTranspileResult(val files: Map<String, String>)
  * `require(...)` calls they need. Only auto-requires when a free identifier exactly matches
  * another file's top-level, non-private declaration name; a name declared in more than one file
  * is ambiguous and never auto-required for either. */
-fun transpileProject(files: List<ProjectFile>, style: EmitStyle = EmitStyle.DEFAULT, literalConstants: Map<String, String> = emptyMap()): ProjectTranspileResult {
+fun transpileProject(files: List<ProjectFile>, style: EmitStyle = EmitStyle.DEFAULT, literalConstants: Map<String, String> = emptyMap(), bindings: LuaBindings = LuaBindings()): ProjectTranspileResult {
     require(files.map { it.name }.distinct().size == files.size) { "Duplicate Lua module paths in project inputs" }
-    val parsed = files.map { it.name to Parser(Lexer(it.source).tokenize(), literalConstants).parseProgram() }
+    val fileBindings = files.associate { it.name to bindings.forSource(it.source) }
+    val parsed = files.map { it.name to Parser(Lexer(it.source).tokenize(), literalConstants, fileBindings.getValue(it.name)).parseProgram() }
     val globalClassInfo = classInfoAcrossFiles(parsed.map { it.second })
 
     val owner = mutableMapOf<String, String>()
@@ -50,7 +51,7 @@ fun transpileProject(files: List<ProjectFile>, style: EmitStyle = EmitStyle.DEFA
         var result = program
         if (immediateNeeded.isNotEmpty()) result = prependRequires(result, immediateNeeded)
         if (deferredNeeded.isNotEmpty()) result = injectRequiresIntoMain(result, deferredNeeded)
-        results[fileName] = Emitter(style).emitProgram(result, globalClassInfo)
+        results[fileName] = Emitter(style, fileBindings.getValue(fileName)).emitProgram(result, globalClassInfo)
     }
     return ProjectTranspileResult(results)
 }
@@ -73,6 +74,8 @@ private fun classInfoAcrossFiles(programs: List<Program>): Map<String, ClassInfo
                 hasToString = stmt.methods.any { it.name == "toString" } || superInfo?.hasToString == true,
                 methodReturnTypes = (superInfo?.methodReturnTypes ?: emptyMap()) +
                     stmt.methods.associate { it.name to returnTypes.rawReturnTypeOf(it) },
+                propertyTypes = (superInfo?.propertyTypes ?: emptyMap()) +
+                    stmt.properties.associate { it.name to it.rawType },
             )
         }
     }

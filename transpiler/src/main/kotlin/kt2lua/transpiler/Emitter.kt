@@ -100,7 +100,7 @@ end
 
 """
 
-class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT) : EmitContext {
+class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bindings: LuaBindings = LuaBindings()) : EmitContext {
     override val types = TypeAnalyzer()
     private val indentUnit = style.indentUnit
     // var, not val: emitLambda temporarily swaps this out for a fresh buffer so a lambda's
@@ -119,6 +119,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT) : EmitContext {
      * [externalClasses] lets a multi-file caller pre-register classes declared in other files,
      * so a subclass here can still inherit a cross-file superclass's methods. */
     fun emitProgram(program: Program, externalClasses: Map<String, ClassInfo> = emptyMap()): String {
+        bindings.register(types)
         for ((name, info) in externalClasses) types.registerExternalClass(name, info)
         types.collectSignatures(program.body)
         val hasMain = program.body.any { it is FunctionDecl && it.name == "main" }
@@ -256,7 +257,16 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT) : EmitContext {
         // Lua 5.1 has exactly one numeric type, so a numeric cast is a no-op.
         if (expr.args.isEmpty() && expr.methodName in NUMERIC_CAST_NAMES) return emitExpression(expr.obj)
         if (expr.args.isEmpty() && expr.methodName == "toString") return "tostring(${emitExpression(expr.obj)})"
-        val className = (expr.obj as? Identifier)?.let { types.instanceClassOf(it.name) }
+        val receiverPath = expressionPath(expr.obj)
+        if (expr.methodName == "new" && receiverPath != null) {
+            nativeFactory(receiverPath)?.let { return "$it(${emitArgList(expr.args)})" }
+        }
+        val className = receiverInstanceClass(expr.obj)
+        val nativeMethod = className?.takeIf { types.classInfo(it)?.native == true }?.let { bindings.method(it, expr.methodName) }
+        if (nativeMethod != null) {
+            val separator = if (nativeMethod.first) ":" else "."
+            return "${emitExpression(expr.obj)}$separator${expr.methodName}(${emitArgList(expr.args)})"
+        }
         val isKnownMethod = className?.let { types.classInfo(it)?.methodNames?.contains(expr.methodName) } == true
         if (isKnownMethod) return "${emitExpression(expr.obj)}:${expr.methodName}(${emitArgList(expr.args)})"
         // `.let { }` — a scope function, not a real Lua method: call the lambda directly.
@@ -315,6 +325,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT) : EmitContext {
         val type = decl.varType ?: types.inferExprType(decl.init)
         val initStr = emitExpression(decl.init)
         types.env.declare(decl.name, type)
+        types.declareInstance(decl.name, decl.rawType)
         instanceClassOfExpr(decl.init)?.let { types.declareInstance(decl.name, it) }
         listElementClassOfExpr(decl.init)?.let { types.declareListElement(decl.name, it) }
         line("local ${decl.name} = $initStr")
@@ -331,14 +342,25 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT) : EmitContext {
     /** The class [expr] is known to produce an instance of, if any — a direct constructor
      * call, a function known to return a class, or a method known to return one. */
     private fun instanceClassOfExpr(expr: Expression): String? = when (expr) {
+        is Identifier -> types.instanceClassOf(expr.name) ?: bindings.global(expr.name)
+        is PropertyAccessExpr -> expressionPath(expr)?.let { bindings.global(it) }
+            ?: receiverInstanceClass(expr.obj)?.let { receiver ->
+                if (types.classInfo(receiver)?.native == true) bindings.property(receiver, expr.name)
+                else types.classInfo(receiver)?.propertyTypes?.get(expr.name)
+            }
+        is ParenExpr -> instanceClassOfExpr(expr.expr)
+        is NotNullAssertExpr -> instanceClassOfExpr(expr.expr)
         is CallExpr -> if (types.classInfo(expr.callee) != null) expr.callee else types.functionReturnClass(expr.callee)
         // `.also { }`/`.apply { }` always return their receiver unchanged.
         is MethodCallExpr -> if (expr.methodName == "also" || expr.methodName == "apply") {
             receiverInstanceClass(expr.obj)
         } else {
-            (expr.obj as? Identifier)
-                ?.let { types.instanceClassOf(it.name) }
-                ?.let { receiverClass -> types.methodReturnClass(receiverClass, expr.methodName) }
+            if (expr.methodName == "new" && expressionPath(expr.obj)?.let { nativeFactory(it) } != null) {
+                bindings.type(expressionPath(expr.obj)!!)
+            } else receiverInstanceClass(expr.obj)?.let { receiverClass ->
+                if (types.classInfo(receiverClass)?.native == true) bindings.method(receiverClass, expr.methodName)?.second
+                else types.methodReturnClass(receiverClass, expr.methodName)
+            }
         }
         else -> null
     }
@@ -348,6 +370,15 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT) : EmitContext {
      * previously-declared instance. */
     private fun receiverInstanceClass(expr: Expression): String? =
         (expr as? Identifier)?.let { types.instanceClassOf(it.name) } ?: instanceClassOfExpr(expr)
+
+    private fun expressionPath(expr: Expression): String? = when (expr) {
+        is Identifier -> expr.name
+        is PropertyAccessExpr -> expressionPath(expr.obj)?.let { "$it.${expr.name}" }
+        else -> null
+    }
+
+    private fun nativeFactory(path: String): String? =
+        bindings.factory(path)?.takeIf { types.classInfo(path)?.native != false && types.env.lookup(path) == null }
 
     private fun emitAssignment(stmt: Assignment) {
         val targetStr = emitAssignTarget(stmt.target)
@@ -387,7 +418,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT) : EmitContext {
         is DoubleLiteral -> formatDouble(expr.value)
         is BooleanLiteral -> expr.value.toString()
         NullLiteral -> "nil"
-        is Identifier -> expr.name
+        is Identifier -> if (types.env.lookup(expr.name) == null && types.instanceClassOf(expr.name) == null && types.classInfo(expr.name)?.native != false)
+            bindings.luaName(expr.name) ?: expr.name else expr.name
         is ParenExpr -> "(${emitExpression(expr.expr)})"
         is UnaryExpr -> if (expr.op == "!") "(not ${emitExpression(expr.expr)})" else "(-${emitExpression(expr.expr)})"
         is StringTemplateLiteral -> emitTemplate(expr)
@@ -407,6 +439,9 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT) : EmitContext {
     }
 
     private fun emitPropertyAccess(receiver: Expression, name: String): String {
+        expressionPath(PropertyAccessExpr(receiver, name))?.let { path ->
+            if (types.classInfo(path)?.native != false) bindings.luaName(path)?.let { return it }
+        }
         val target = emitExpression(receiver)
         val reserved = setOf("and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while")
         return if (name.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) && name !in reserved) "$target.$name"
@@ -554,7 +589,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT) : EmitContext {
                 return "($fnStr)(${emitExpression(receiver)})"
             }
         }
-        types.classInfo(expr.callee)?.let { return emitConstructorCall(expr, it) }
+        nativeFactory(expr.callee)?.let { return "$it(${emitArgList(expr.args)})" }
+        types.classInfo(expr.callee)?.takeUnless { it.native }?.let { return emitConstructorCall(expr, it) }
         if (expr.args.isNotEmpty() && expr.args.all { it is NamedArg } && expr.callee.first().isUpperCase()) {
             // A PascalCase callee with all-named args reads as an object-literal stand-in
             // (e.g. `IdLookup(label = ..., value = ...)`) — emit the bare table.

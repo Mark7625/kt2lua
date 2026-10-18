@@ -44,7 +44,7 @@ private val ASSIGN_OPS = mapOf(
  * [StatementParser]; this class keeps only what's shared — token navigation, expression
  * parsing, and grammar more than one feature needs — exposed via [ParserContext].
  */
-class Parser(private val tokens: List<Token>, literalConstants: Map<String, String> = emptyMap()) : ParserContext {
+class Parser(private val tokens: List<Token>, literalConstants: Map<String, String> = emptyMap(), private val bindings: LuaBindings = LuaBindings()) : ParserContext {
     private val literalConstants = literalConstants.toMutableMap()
     private val cursor = TokenCursor(tokens, Token::type, TokenType.EOF)
     private val pos get() = cursor.pos
@@ -92,6 +92,7 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
             segments.add(expectIdentifierName())
         }
         val alias = if (match(TokenType.AS)) expectIdentifierName() else segments.last()
+        if (bindings.type(segments.joinToString(".")) != null) return null
         val constantPrefix = segments.joinToString(".") + "."
         val importedConstants = literalConstants.filterKeys { it.startsWith(constantPrefix) }
         if (importedConstants.isNotEmpty()) {
@@ -199,9 +200,13 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
         advance()
         val name = expectIdentifierName()
         var varType: TypeName? = null
-        if (match(TokenType.COLON)) varType = parseTypeName()
+        var rawType = ""
+        if (match(TokenType.COLON)) {
+            rawType = current().text ?: ""
+            varType = parseTypeName()
+        }
         expect(TokenType.ASSIGN)
-        return VariableDecl(name, varType, mutable, parseExpression(), isPrivate)
+        return VariableDecl(name, varType, mutable, parseExpression(), isPrivate, rawType)
     }
 
     override fun parseBlock(): Block {

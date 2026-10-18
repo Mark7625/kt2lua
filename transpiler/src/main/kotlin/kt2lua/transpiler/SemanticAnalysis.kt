@@ -54,6 +54,8 @@ data class ClassInfo(
     val methodNames: Set<String>,
     val hasToString: Boolean,
     val methodReturnTypes: Map<String, String> = emptyMap(),
+    val propertyTypes: Map<String, String> = emptyMap(),
+    val native: Boolean = false,
 )
 
 private val BUILTIN_SIGS = mapOf(
@@ -150,6 +152,8 @@ class TypeAnalyzer {
                         hasToString = stmt.methods.any { it.name == "toString" } || superInfo?.hasToString == true,
                         methodReturnTypes = (superInfo?.methodReturnTypes ?: emptyMap()) +
                             stmt.methods.associate { it.name to rawReturnTypeOf(it) },
+                        propertyTypes = (superInfo?.propertyTypes ?: emptyMap()) +
+                            stmt.properties.associate { it.name to it.rawType },
                     )
                 }
                 else -> {}

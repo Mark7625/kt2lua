@@ -14,6 +14,7 @@ import kt2lua.transpiler.ProjectTranspileResult
 import kt2lua.transpiler.discoverProjectFiles
 import kt2lua.transpiler.projectFileForSource
 import kt2lua.transpiler.withLuaLayout
+import kt2lua.transpiler.LuaBindings
 import kt2lua.transpiler.transpile
 import kt2lua.transpiler.transpileProject
 import java.io.File
@@ -32,7 +33,7 @@ private const val VERSION = "0.1.0"
  * scattered alongside hand-written sources). */
 private const val DEFAULT_OUT_DIR = "build/dist"
 
-private val KNOWN_FLAGS = setOf("-o", "--out", "--run", "--mock-globals", "--style", "--constants", "--package-root", "--lowercase-files", "-h", "--help", "-v", "--version")
+private val KNOWN_FLAGS = setOf("-o", "--out", "--run", "--mock-globals", "--style", "--constants", "--bindings", "--package-root", "--lowercase-files", "-h", "--help", "-v", "--version")
 
 fun main(args: Array<String>) {
     if (args.isEmpty()) {
@@ -48,6 +49,7 @@ fun main(args: Array<String>) {
     var mockGlobals: List<String> = emptyList()
     var stylePath: String? = null
     val literalConstants = mutableMapOf<String, String>()
+    val bindingEntries = mutableMapOf<String, String>()
     var i = 0
     while (i < args.size) {
         val arg = args[i]
@@ -68,15 +70,16 @@ fun main(args: Array<String>) {
                 i++
             }
             "--lowercase-files" -> lowercaseFiles = true
-            "--constants" -> {
-                val file = File(args.getOrNull(i + 1) ?: usageError("--constants requires a .properties path"))
+            "--constants", "--bindings" -> {
+                val file = File(args.getOrNull(i + 1) ?: usageError("$arg requires a .properties path"))
                 val properties = Properties()
                 try {
                     file.reader(Charsets.UTF_8).use { properties.load(it) }
                 } catch (e: Exception) {
                     usageError("Cannot read constants ${file.path}: ${e.message}")
                 }
-                for (key in properties.stringPropertyNames()) literalConstants[key] = properties.getProperty(key)
+                val destination = if (arg == "--bindings") bindingEntries else literalConstants
+                for (key in properties.stringPropertyNames()) destination[key] = properties.getProperty(key)
                 i++
             }
             "--mock-globals" -> {
@@ -109,6 +112,7 @@ fun main(args: Array<String>) {
     // falls back to kt2lua's own defaults — see EmitStyle.load's own doc comment.
     val styleFile = stylePath?.let { File(it) } ?: EmitStyle.autoDetect(File("."))
     val style = EmitStyle.load(styleFile)
+    val bindings = LuaBindings(bindingEntries)
 
     if (inputPaths.size == 1 && inputPaths[0].endsWith(".lua")) {
         val inputFile = File(inputPaths[0])
@@ -129,12 +133,12 @@ fun main(args: Array<String>) {
 
     if (inputPaths.size == 1 && File(inputPaths[0]).isDirectory) {
         if (run) usageError("--run isn't supported when transpiling a directory (no single entry point to run)")
-        transpileDirectory(inputPaths[0], outputPath, style, literalConstants, rootPackage, lowercaseFiles)
+        transpileDirectory(inputPaths[0], outputPath, style, literalConstants, rootPackage, lowercaseFiles, bindings)
     } else if (inputPaths.size == 1) {
-        transpileSingleFile(inputPaths[0], outputPath, run, style, literalConstants, rootPackage, lowercaseFiles)
+        transpileSingleFile(inputPaths[0], outputPath, run, style, literalConstants, rootPackage, lowercaseFiles, bindings)
     } else {
         if (run) usageError("--run isn't supported with multiple input files (no single entry point to run)")
-        transpileProjectFiles(inputPaths, outputPath, style, literalConstants, rootPackage, lowercaseFiles)
+        transpileProjectFiles(inputPaths, outputPath, style, literalConstants, rootPackage, lowercaseFiles, bindings)
     }
 }
 
@@ -149,10 +153,10 @@ private fun usageError(message: String): Nothing {
     exitProcess(1)
 }
 
-private fun transpileSingleFile(inputPath: String, outputPath: String?, run: Boolean, style: EmitStyle, literalConstants: Map<String, String>, rootPackage: String?, lowercaseFiles: Boolean) {
+private fun transpileSingleFile(inputPath: String, outputPath: String?, run: Boolean, style: EmitStyle, literalConstants: Map<String, String>, rootPackage: String?, lowercaseFiles: Boolean, bindings: LuaBindings) {
     val source = File(inputPath).readText()
     val result = try {
-        transpile(source, style, literalConstants)
+        transpile(source, style, literalConstants, bindings)
     } catch (e: Exception) {
         System.err.println("kt2lua: ${diagnosticFor(inputPath, e)}")
         exitProcess(1)
@@ -183,11 +187,11 @@ private fun transpileSingleFile(inputPath: String, outputPath: String?, run: Boo
  * same module path is used by sibling `require(...)` calls. Defaults to [DEFAULT_OUT_DIR] when `-o` isn't
  * given, same as the single-file case.
  */
-private fun transpileProjectFiles(inputPaths: List<String>, outputPath: String?, style: EmitStyle, literalConstants: Map<String, String>, rootPackage: String?, lowercaseFiles: Boolean) {
+private fun transpileProjectFiles(inputPaths: List<String>, outputPath: String?, style: EmitStyle, literalConstants: Map<String, String>, rootPackage: String?, lowercaseFiles: Boolean, bindings: LuaBindings) {
     val projectFiles = inputPaths.map { path ->
         projectFileForSource(File(path).nameWithoutExtension, File(path).readText())
     }
-    writeProject(projectFiles.map { it.withLuaLayout(rootPackage, lowercaseFiles) }, outputPath, style, literalConstants)
+    writeProject(projectFiles.map { it.withLuaLayout(rootPackage, lowercaseFiles) }, outputPath, style, literalConstants, bindings)
 }
 
 /**
@@ -196,15 +200,15 @@ private fun transpileProjectFiles(inputPaths: List<String>, outputPath: String?,
  * files without a package retain their paths relative to [dirPath]. Optional layout flags
  * strip the chosen root package and lowercase filenames before requires are resolved.
  */
-private fun transpileDirectory(dirPath: String, outputPath: String?, style: EmitStyle, literalConstants: Map<String, String>, rootPackage: String?, lowercaseFiles: Boolean) {
+private fun transpileDirectory(dirPath: String, outputPath: String?, style: EmitStyle, literalConstants: Map<String, String>, rootPackage: String?, lowercaseFiles: Boolean, bindings: LuaBindings) {
     val projectFiles = discoverProjectFiles(File(dirPath))
     if (projectFiles.isEmpty()) usageError("No .kt files found under $dirPath")
-    writeProject(projectFiles.map { it.withLuaLayout(rootPackage, lowercaseFiles) }, outputPath, style, literalConstants)
+    writeProject(projectFiles.map { it.withLuaLayout(rootPackage, lowercaseFiles) }, outputPath, style, literalConstants, bindings)
 }
 
-private fun writeProject(projectFiles: List<ProjectFile>, outputPath: String?, style: EmitStyle, literalConstants: Map<String, String>) {
+private fun writeProject(projectFiles: List<ProjectFile>, outputPath: String?, style: EmitStyle, literalConstants: Map<String, String>, bindings: LuaBindings) {
     val result: ProjectTranspileResult = try {
-        transpileProject(projectFiles, style, literalConstants)
+        transpileProject(projectFiles, style, literalConstants, bindings)
     } catch (e: Exception) {
         System.err.println("kt2lua: ${e.message ?: e.toString()}")
         exitProcess(1)
@@ -299,6 +303,7 @@ private fun printHelp() {
           --constants <file>       Inline generated constants/lookups from a .properties
                                    catalog; repeat for multiple catalogs
           --package-root <name>   Place this Kotlin package at the output root
+          --bindings <file>       Host API constructor and method signatures; repeatable
           --lowercase-files       Lowercase Lua filenames and matching require paths
           -h, --help               Show this help message
           -v, --version            Show the version number

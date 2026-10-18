@@ -56,6 +56,12 @@ if (file("libs/runescape").exists()) {
         group = "com.mark.runescape"
         version = "0.1.0"
 
+        plugins.withId("java") {
+            tasks.named<ProcessResources>("processResources") {
+                from("src/main/kotlin") { include("**/lua-bindings.properties") }
+            }
+        }
+
         plugins.withId("maven-publish") {
             extensions.configure<JavaPluginExtension> {
                 withSourcesJar()

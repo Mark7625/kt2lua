@@ -71,6 +71,7 @@ data class VariableDecl(
     val mutable: Boolean,
     val init: Expression,
     val isPrivate: Boolean = false,
+    val rawType: String = "",
 ) : Statement()
 
 data class ExpressionStatement(val expr: Expression) : Statement()
