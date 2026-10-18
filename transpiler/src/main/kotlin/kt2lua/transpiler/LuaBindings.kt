@@ -31,6 +31,11 @@ class LuaBindings(private val entries: Map<String, String> = emptyMap()) {
     fun factory(name: String): String? = type(name)?.let { entries["factory.$it"] }
     fun property(type: String, name: String): String? = entries["property.${this.type(type) ?: type}#$name"]
     fun global(path: String): String? = entries["global.$path"]
+    fun hostPath(path: String): String? = entries["path.$path"]
+    fun methodName(type: String, name: String): String = entries["methodName.${this.type(type) ?: type}#$name"] ?: name
+    fun propertyName(type: String, name: String): String = entries["propertyName.${this.type(type) ?: type}#$name"] ?: name
+    fun recordFields(name: String): List<String>? = type(name)?.let { entries["record.$it"] }?.split(',')?.filter { it.isNotEmpty() }
+    fun isDataRecord(name: String): Boolean = type(name)?.let { entries["data.$it"] } == "true"
     fun events(payload: String): Map<String, String> =
         entries.filterKeys { it.startsWith("event.${type(payload) ?: payload}#") }.mapKeys { it.key.substringAfter('#') }
     fun method(type: String, name: String): Pair<Boolean, String?>? =

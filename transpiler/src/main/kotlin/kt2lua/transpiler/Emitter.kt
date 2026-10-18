@@ -112,6 +112,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private var usesFold = false
     private var usesResult = false
     private var usesTakeIf = false
+    private var usesRecordCopy = false
     private var receiverCounter = 0
     private val usedCollectionHelpers = mutableSetOf<String>()
 
@@ -142,6 +143,15 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         val body = out.toString()
         var prefix = ""
         if (usesResult) prefix += RESULT_RUNTIME
+        if (usesRecordCopy) prefix += """
+            local function __copyRecord(source, changes)
+               local result = {}
+               for key, value in pairs(source) do result[key] = value end
+               for _, change in ipairs(changes) do result[change.key] = change.value end
+               return result
+            end
+
+        """.trimIndent() + "\n"
         if (usesTakeIf) prefix += """
             local function __takeIf(value, predicate, invert)
                if predicate(value) ~= invert then return value end
@@ -283,10 +293,27 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         if (expr.args.isEmpty() && expr.methodName in NUMERIC_CAST_NAMES) return emitExpression(expr.obj)
         if (expr.args.isEmpty() && expr.methodName == "toString") return "tostring(${emitExpression(expr.obj)})"
         val receiverPath = expressionPath(expr.obj)
+        receiverPath?.let { bindings.hostPath("$it.${expr.methodName}") }?.let { path ->
+            return "$path(${emitArgList(expr.args)})"
+        }
         if (expr.methodName == "new" && receiverPath != null) {
             nativeFactory(receiverPath)?.let { return "$it(${emitArgList(expr.args)})" }
         }
         val className = receiverInstanceClass(expr.obj)
+        if (className != null && bindings.isDataRecord(className)) {
+            if (expr.methodName == "copy") {
+                usesRecordCopy = true
+                val changes = recordArguments(className, expr.args).joinToString(", ") {
+                    "{key = ${quoteLuaString(bindings.propertyName(className, it.name), style.quoteStyle)}, value = ${emitExpression(it.expr)}}"
+                }
+                return "__copyRecord(${emitExpression(expr.obj)}, {$changes})"
+            }
+            if (expr.methodName.matches(Regex("component[1-9][0-9]*")) && expr.args.isEmpty()) {
+                val index = expr.methodName.removePrefix("component").toInt() - 1
+                val field = bindings.recordFields(className)!!.getOrElse(index) { error("Invalid component index for $className") }
+                return emitPropertyAccess(expr.obj, field)
+            }
+        }
         if (className == RESULT_CLASS) {
             val helper = when (expr.methodName) {
                 "onSuccess" -> "__resultOnSuccess"
@@ -301,7 +328,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         val nativeMethod = className?.takeIf { types.classInfo(it)?.native == true }?.let { bindings.method(it, expr.methodName) }
         if (nativeMethod != null) {
             val separator = if (nativeMethod.first) ":" else "."
-            return "${emitExpression(expr.obj)}$separator${expr.methodName}(${emitArgList(expr.args)})"
+            return "${emitExpression(expr.obj)}$separator${bindings.methodName(className!!, expr.methodName)}(${emitArgList(expr.args)})"
         }
         val isKnownMethod = className?.let { types.classInfo(it)?.methodNames?.contains(expr.methodName) } == true
         if (isKnownMethod) return "${emitExpression(expr.obj)}:${expr.methodName}(${emitArgList(expr.args)})"
@@ -428,7 +455,9 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                 types.instanceClassOf(receiver)?.let { types.methodReturnClass(it, expr.callee) }
             } ?: types.functionReturnClass(expr.callee)
         // `.also { }`/`.apply { }` always return their receiver unchanged.
-        is MethodCallExpr -> if (expr.methodName in setOf("also", "apply", "takeIf", "takeUnless") && !hasDeclaredMethod(expr)) {
+        is MethodCallExpr -> if (expr.methodName == "copy" && receiverInstanceClass(expr.obj)?.let { bindings.isDataRecord(it) } == true) {
+            receiverInstanceClass(expr.obj)
+        } else if (expr.methodName in setOf("also", "apply", "takeIf", "takeUnless") && !hasDeclaredMethod(expr)) {
             receiverInstanceClass(expr.obj)
         } else if (expr.methodName in setOf("let", "run") && expr.args.size == 1 && !hasDeclaredMethod(expr)) {
             scopeResultClass(expr.args.single().toExpression(), receiverInstanceClass(expr.obj), receiverStyle = expr.methodName == "run")
@@ -576,18 +605,23 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
 
     private fun emitPropertyAccess(receiver: Expression, name: String): String {
         expressionPath(PropertyAccessExpr(receiver, name))?.let { path ->
+            bindings.hostPath(path)?.let { return it }
             if (types.classInfo(path)?.native != false) bindings.luaName(path)?.let { return it }
         }
         val target = emitExpression(receiver)
+        val hostName = receiverInstanceClass(receiver)?.takeIf { types.classInfo(it)?.native == true }
+            ?.let { bindings.propertyName(it, name) } ?: name
         val reserved = setOf("and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while")
-        return if (name.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) && name !in reserved) "$target.$name"
-        else "$target[${quoteLuaString(name, style.quoteStyle)}]"
+        return if (hostName.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) && hostName !in reserved) "$target.$hostName"
+        else "$target[${quoteLuaString(hostName, style.quoteStyle)}]"
     }
 
     private fun emitIdentifier(name: String): String {
         if (name == "self") return types.currentReceiver() ?: name
         types.memberReceiver(name)?.let { receiver ->
-            return if (isLengthProperty(name) && types.instanceClassOf(receiver) in setOf("String", "List")) "#$receiver" else "$receiver.$name"
+            val className = types.instanceClassOf(receiver)
+            val hostName = className?.takeIf { types.classInfo(it)?.native == true }?.let { bindings.propertyName(it, name) } ?: name
+            return if (isLengthProperty(name) && className in setOf("String", "List")) "#$receiver" else "$receiver.$hostName"
         }
         return if (types.env.lookup(name) == null && types.instanceClassOf(name) == null && types.classInfo(name)?.native != false)
             bindings.luaName(name) ?: name else name
@@ -698,11 +732,13 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             receiverInstanceClass(current)?.let { types.declareInstance(temporary, it) }
             when (step) {
                 is ChainProp -> {
-                    sb.append("${indentUnit}$temporary = ${emitExpression(PropertyAccessExpr(Identifier(temporary), step.name))}\n")
+                    val hostName = expressionPath(PropertyAccessExpr(current, step.name))?.let { bindings.hostPath(it) }?.substringAfterLast('.') ?: step.name
+                    sb.append("${indentUnit}$temporary = ${emitExpression(PropertyAccessExpr(Identifier(temporary), hostName))}\n")
                     current = PropertyAccessExpr(current, step.name)
                 }
                 is ChainCall -> {
-                    sb.append("${indentUnit}$temporary = ${emitMethodCallTarget(MethodCallExpr(Identifier(temporary), step.name, step.args))}\n")
+                    val hostName = expressionPath(PropertyAccessExpr(current, step.name))?.let { bindings.hostPath(it) }?.substringAfterLast('.') ?: step.name
+                    sb.append("${indentUnit}$temporary = ${emitMethodCallTarget(MethodCallExpr(Identifier(temporary), hostName, step.args))}\n")
                     current = MethodCallExpr(current, step.name, step.args)
                 }
             }
@@ -740,7 +776,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             val info = className?.let { types.classInfo(it) }
             val colon = if (info?.native == true) bindings.method(className, expr.callee)?.first == true
                 else expr.callee in (info?.methodNames ?: emptySet())
-            return "$receiver${if (colon) ":" else "."}${expr.callee}(${emitArgList(expr.args)})"
+            val method = if (info?.native == true) bindings.methodName(className!!, expr.callee) else expr.callee
+            return "$receiver${if (colon) ":" else "."}$method(${emitArgList(expr.args)})"
         }
         if (expr.callee == "runCatching" && expr.args.size == 1) {
             usesResult = true
@@ -779,6 +816,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             }
         }
         nativeFactory(expr.callee)?.let { return "$it(${emitArgList(expr.args)})" }
+        bindings.recordFields(expr.callee)?.let { fields ->
+            val canonical = bindings.type(expr.callee)!!
+            return emitNamedArgTable(recordArguments(expr.callee, expr.args).map { it.copy(name = bindings.propertyName(canonical, it.name)) })
+        }
         types.classInfo(expr.callee)?.takeUnless { it.native }?.let { return emitConstructorCall(expr, it) }
         if (expr.args.isNotEmpty() && expr.args.all { it is NamedArg } && expr.callee.first().isUpperCase()) {
             // A PascalCase callee with all-named args reads as an object-literal stand-in
@@ -818,6 +859,19 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             return emitNamedArgTable(args.filterIsInstance<NamedArg>())
         }
         return args.joinToString(", ") { if (it is SpreadArg) "unpack(${emitExpression(it.expr)})" else emitExpression(it.toExpression()) }
+    }
+
+    private fun recordArguments(type: String, args: List<CallArg>): List<NamedArg> {
+        val fields = bindings.recordFields(type)!!
+        val values = args.mapIndexed { index, arg ->
+            when (arg) {
+                is NamedArg -> arg.also { require(it.name in fields) { "Unknown record field ${it.name} for $type" } }
+                is PositionalArg -> NamedArg(fields.getOrElse(index) { error("Too many record arguments for $type") }, arg.expr)
+                else -> error("Spread arguments are not supported for API records")
+            }
+        }
+        require(values.map { it.name }.distinct().size == values.size) { "Duplicate record arguments for $type" }
+        return values
     }
 
     /** Stays on one line when every field's value is single-line; if any value spans multiple
