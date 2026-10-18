@@ -15,7 +15,10 @@ class ObjectFeature : StatementParser {
         val name = ctx.expectIdentifierName()
         ctx.expect(TokenType.LBRACE)
         val body = mutableListOf<Statement>()
-        while (!ctx.check(TokenType.RBRACE)) body.add(ctx.parseStatement())
+        while (!ctx.check(TokenType.RBRACE)) {
+            if (ctx.match(TokenType.SEMICOLON)) continue
+            body.add(ctx.parseStatement())
+        }
         ctx.expect(TokenType.RBRACE)
         return ObjectDecl(name, body)
     }

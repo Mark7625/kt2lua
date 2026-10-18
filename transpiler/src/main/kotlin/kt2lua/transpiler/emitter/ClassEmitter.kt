@@ -25,7 +25,7 @@ object ClassEmitter {
             ctx.line("local self = setmetatable({}, ${decl.name})")
         }
         ctx.types.pushScope()
-        ctx.types.declareInstance("self", decl.name)
+        ctx.types.declareReceiver("self", decl.name)
         for (p in decl.params) ctx.line("self.${p.name} = ${p.name}")
         for (prop in decl.properties) ctx.line("self.${prop.name} = ${ctx.emitExpression(prop.init)}")
         ctx.types.popScope()
@@ -37,6 +37,7 @@ object ClassEmitter {
             if (ctx.style.blankLineBeforeDeclarations) ctx.line("")
             emitClassMethod(decl.name, m, ctx)
         }
+        ctx.emitSubscriptions(decl)
     }
 
     /** Mirrors Kotlin's auto-generated `data class` `toString()` (`Point(x=1, y=2)`) as a Lua
@@ -49,7 +50,7 @@ object ClassEmitter {
 
     private fun emitClassMethod(className: String, fn: FunctionDecl, ctx: EmitContext) {
         ctx.types.pushScope()
-        ctx.types.declareInstance("self", className)
+        ctx.types.declareReceiver("self", className)
         fn.params.forEach {
             ctx.types.env.declare(it.name, it.type)
             ctx.types.declareInstance(it.name, it.rawType)

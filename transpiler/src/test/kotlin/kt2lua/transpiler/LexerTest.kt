@@ -74,7 +74,7 @@ class LexerTest {
 
     @Test
     fun `unexpected character raises a lex exception`() {
-        assertFailsWith<LexException> { Lexer("@").tokenize() }
+        assertFailsWith<LexException> { Lexer("#").tokenize() }
     }
 
     @Test

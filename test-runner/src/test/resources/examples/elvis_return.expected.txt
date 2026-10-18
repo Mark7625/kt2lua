@@ -1,0 +1,6 @@
+missing
+ready
+false
+empty
+1
+present

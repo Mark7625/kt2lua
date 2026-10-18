@@ -31,6 +31,8 @@ class LuaBindings(private val entries: Map<String, String> = emptyMap()) {
     fun factory(name: String): String? = type(name)?.let { entries["factory.$it"] }
     fun property(type: String, name: String): String? = entries["property.${this.type(type) ?: type}#$name"]
     fun global(path: String): String? = entries["global.$path"]
+    fun events(payload: String): Map<String, String> =
+        entries.filterKeys { it.startsWith("event.${type(payload) ?: payload}#") }.mapKeys { it.key.substringAfter('#') }
     fun method(type: String, name: String): Pair<Boolean, String?>? =
         entries["method.${this.type(type) ?: type}#$name"]?.let {
             (it.substringBefore('|') == "colon") to it.substringAfter('|').ifEmpty { null }
@@ -39,8 +41,15 @@ class LuaBindings(private val entries: Map<String, String> = emptyMap()) {
     fun register(types: TypeAnalyzer) {
         for (name in classNames + aliases.keys + symbols.keys) {
             val canonical = type(name) ?: continue
-            types.registerExternalClass(name, ClassInfo(emptyList(), emptySet(), false, native = true))
-            types.registerExternalClass(canonical, ClassInfo(emptyList(), emptySet(), false, native = true))
+            val methods = entries.filterKeys { it.startsWith("method.$canonical#") }
+                .mapKeys { it.key.substringAfter('#') }
+            val properties = entries.filterKeys { it.startsWith("property.$canonical#") }
+                .mapKeys { it.key.substringAfter('#') }
+            val info = ClassInfo(emptyList(), methods.filterValues { it.startsWith("colon|") }.keys, false,
+                methodReturnTypes = methods.mapValues { it.value.substringAfter('|') },
+                propertyTypes = properties, native = true)
+            types.registerExternalClass(name, info)
+            types.registerExternalClass(canonical, info)
         }
     }
 }

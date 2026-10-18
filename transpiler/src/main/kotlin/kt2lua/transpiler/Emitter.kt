@@ -101,6 +101,7 @@ end
 """
 
 class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bindings: LuaBindings = LuaBindings()) : EmitContext {
+    override fun emitSubscriptions(decl: ClassDecl) = kt2lua.transpiler.emitter.SubscriptionEmitter.emit(decl, this, bindings)
     override val types = TypeAnalyzer()
     private val indentUnit = style.indentUnit
     // var, not val: emitLambda temporarily swaps this out for a fresh buffer so a lambda's
@@ -109,6 +110,9 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private var indentLevel = 0
     private var usesIntDiv = false
     private var usesFold = false
+    private var usesResult = false
+    private var usesTakeIf = false
+    private var receiverCounter = 0
     private val usedCollectionHelpers = mutableSetOf<String>()
 
     /** A file with a top-level `fun main()` compiles as a script. A file with no `main()` but
@@ -120,6 +124,9 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
      * so a subclass here can still inherit a cross-file superclass's methods. */
     fun emitProgram(program: Program, externalClasses: Map<String, ClassInfo> = emptyMap()): String {
         bindings.register(types)
+        types.registerExternalClass(RESULT_CLASS, ClassInfo(emptyList(), emptySet(), false))
+        types.registerExternalClass("String", ClassInfo(emptyList(), emptySet(), false, propertyTypes = mapOf("length" to "Int"), native = true))
+        types.registerExternalClass("List", ClassInfo(emptyList(), emptySet(), false, propertyTypes = mapOf("size" to "Int"), native = true))
         for ((name, info) in externalClasses) types.registerExternalClass(name, info)
         types.collectSignatures(program.body)
         val hasMain = program.body.any { it is FunctionDecl && it.name == "main" }
@@ -134,6 +141,13 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         }
         val body = out.toString()
         var prefix = ""
+        if (usesResult) prefix += RESULT_RUNTIME
+        if (usesTakeIf) prefix += """
+            local function __takeIf(value, predicate, invert)
+               if predicate(value) ~= invert then return value end
+            end
+
+        """.trimIndent() + "\n"
         for ((name, source) in COLLECTION_HELPERS) if (name in usedCollectionHelpers) prefix += source
         if (usesFold) prefix += FOLD_HELPER
         if (usesIntDiv) prefix += INT_DIV_HELPER
@@ -203,7 +217,18 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             is ClassDecl -> ClassEmitter.emitClassDecl(stmt, this)
             is FunctionDecl -> emitFunctionDecl(stmt)
             is VariableDecl -> emitVariableDecl(stmt)
-            is ExpressionStatement -> line(emitExpression(stmt.expr))
+            is ExpressionStatement -> {
+                elvisReturn(stmt.expr)?.let { guard ->
+                    val temporary = "__guard${++receiverCounter}"
+                    line("local $temporary = ${emitExpression(guard.left)}")
+                    emitReturnGuard(temporary, guard.right as ReturnExpr)
+                    return
+                }
+                val code = emitExpression(stmt.expr)
+                // In Lua, a newline before '(' can continue the preceding function call.
+                val callable = stmt.expr is CallExpr || stmt.expr is MethodCallExpr || stmt.expr is SafeChainExpr || stmt.expr is NotNullAssertExpr
+                line(if (!callable) "do local __discard = $code end" else if (code.startsWith("(")) ";$code" else code)
+            }
             is ReturnStatement -> line(stmt.expr?.let { "return ${emitExpression(it)}" } ?: "return")
             is IfStatement -> IfEmitter.emitIfStatement(stmt, this)
             is WhenStatement -> WhenEmitter.emitWhenStatement(stmt, this)
@@ -262,6 +287,17 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             nativeFactory(receiverPath)?.let { return "$it(${emitArgList(expr.args)})" }
         }
         val className = receiverInstanceClass(expr.obj)
+        if (className == RESULT_CLASS) {
+            val helper = when (expr.methodName) {
+                "onSuccess" -> "__resultOnSuccess"
+                "onFailure" -> "__resultOnFailure"
+                "getOrNull" -> "__resultGetOrNull"
+                else -> error("Result.${expr.methodName} is not supported yet")
+            }
+            usesResult = true
+            val args = listOf(emitExpression(expr.obj)) + expr.args.map { emitExpression(it.toExpression()) }
+            return "$helper(${args.joinToString(", ")})"
+        }
         val nativeMethod = className?.takeIf { types.classInfo(it)?.native == true }?.let { bindings.method(it, expr.methodName) }
         if (nativeMethod != null) {
             val separator = if (nativeMethod.first) ":" else "."
@@ -269,6 +305,12 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         }
         val isKnownMethod = className?.let { types.classInfo(it)?.methodNames?.contains(expr.methodName) } == true
         if (isKnownMethod) return "${emitExpression(expr.obj)}:${expr.methodName}(${emitArgList(expr.args)})"
+        if (expr.methodName in setOf("takeIf", "takeUnless") && expr.args.size == 1) {
+            usesTakeIf = true
+            val predicate = expr.args.single().toExpression()
+            val callback = if (predicate is LambdaExpr) emitLambda(predicate, receiverInstanceClass(expr.obj)) else emitExpression(predicate)
+            return "__takeIf(${emitExpression(expr.obj)}, $callback, ${expr.methodName == "takeUnless"})"
+        }
         // `.let { }` — a scope function, not a real Lua method: call the lambda directly.
         if (expr.methodName == "let" && expr.args.size == 1) {
             val lambdaArg = expr.args[0].toExpression()
@@ -285,17 +327,16 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             }
             return "($fnStr)(${emitExpression(expr.obj)})"
         }
-        // `.run { }`/`.apply { }` — receiver-style scope functions: no declared lambda param,
-        // referring to the receiver via `this`. Forcing the implicit param to be named `self`
-        // (the identifier `this` already lexes to) makes `this.x` resolve inside them.
+        // Receiver-style scope functions preserve outer class receivers in nested lambdas.
         if ((expr.methodName == "run" || expr.methodName == "apply") && expr.args.size == 1) {
             val lambdaArg = expr.args[0].toExpression()
             val fnStr = if (lambdaArg is LambdaExpr) {
                 emitLambda(
                     lambdaArg.copy(params = emptyList()),
                     receiverInstanceClass(expr.obj),
-                    implicitParamName = "self",
+                    implicitParamName = receiverParameterName(),
                     returnReceiver = expr.methodName == "apply",
+                    receiverScope = true,
                 )
             } else {
                 emitExpression(lambdaArg)
@@ -322,6 +363,11 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     }
 
     private fun emitVariableDecl(decl: VariableDecl) {
+        elvisReturn(decl.init)?.let { guard ->
+            emitVariableDecl(decl.copy(init = guard.left))
+            emitReturnGuard(decl.name, guard.right as ReturnExpr)
+            return
+        }
         val type = decl.varType ?: types.inferExprType(decl.init)
         val initStr = emitExpression(decl.init)
         types.env.declare(decl.name, type)
@@ -329,6 +375,20 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         instanceClassOfExpr(decl.init)?.let { types.declareInstance(decl.name, it) }
         listElementClassOfExpr(decl.init)?.let { types.declareListElement(decl.name, it) }
         line("local ${decl.name} = $initStr")
+    }
+
+    private fun elvisReturn(expr: Expression): ElvisExpr? = when (expr) {
+        is ParenExpr -> elvisReturn(expr.expr)
+        is ElvisExpr -> expr.takeIf { it.right is ReturnExpr }
+        else -> null
+    }
+
+    private fun emitReturnGuard(value: String, exit: ReturnExpr) {
+        line("if $value == nil then")
+        pushIndent()
+        emitStatement(ReturnStatement(exit.value))
+        popIndent()
+        line("end")
     }
 
     /** `val team = listOf(Employee(...), Employee(...))` — null unless every element resolves
@@ -342,7 +402,14 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     /** The class [expr] is known to produce an instance of, if any — a direct constructor
      * call, a function known to return a class, or a method known to return one. */
     private fun instanceClassOfExpr(expr: Expression): String? = when (expr) {
-        is Identifier -> types.instanceClassOf(expr.name) ?: bindings.global(expr.name)
+        is StringTemplateLiteral -> "String"
+        is Identifier -> {
+            val resolvedName = if (expr.name == "self") types.currentReceiver() ?: "self" else expr.name
+            types.instanceClassOf(resolvedName) ?: bindings.global(expr.name)
+                ?: types.memberReceiver(expr.name)?.let { receiver ->
+                    types.instanceClassOf(receiver)?.let { types.classInfo(it)?.propertyTypes?.get(expr.name) }
+                }
+        }
         is PropertyAccessExpr -> expressionPath(expr)?.let { bindings.global(it) }
             ?: receiverInstanceClass(expr.obj)?.let { receiver ->
                 if (types.classInfo(receiver)?.native == true) bindings.property(receiver, expr.name)
@@ -350,18 +417,38 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             }
         is ParenExpr -> instanceClassOfExpr(expr.expr)
         is NotNullAssertExpr -> instanceClassOfExpr(expr.expr)
-        is CallExpr -> if (types.classInfo(expr.callee) != null) expr.callee else types.functionReturnClass(expr.callee)
+        is CallExpr -> if (expr.callee in setOf("listOf", "emptyList")) "List"
+            else if (expr.callee == "runCatching" && types.memberReceiver(expr.callee) == null) RESULT_CLASS
+            else if (expr.callee == "run" && expr.args.size == 1 && types.memberReceiver(expr.callee) == null)
+                scopeResultClass(expr.args.single().toExpression(), null, noParams = true)
+            else if (expr.callee == "with" && expr.args.size == 2 && types.memberReceiver(expr.callee) == null)
+                scopeResultClass(expr.args[1].toExpression(), receiverInstanceClass(expr.args[0].toExpression()), receiverStyle = true)
+            else if (types.classInfo(expr.callee) != null) expr.callee
+            else types.memberReceiver(expr.callee)?.let { receiver ->
+                types.instanceClassOf(receiver)?.let { types.methodReturnClass(it, expr.callee) }
+            } ?: types.functionReturnClass(expr.callee)
         // `.also { }`/`.apply { }` always return their receiver unchanged.
-        is MethodCallExpr -> if (expr.methodName == "also" || expr.methodName == "apply") {
+        is MethodCallExpr -> if (expr.methodName in setOf("also", "apply", "takeIf", "takeUnless") && !hasDeclaredMethod(expr)) {
             receiverInstanceClass(expr.obj)
+        } else if (expr.methodName in setOf("let", "run") && expr.args.size == 1 && !hasDeclaredMethod(expr)) {
+            scopeResultClass(expr.args.single().toExpression(), receiverInstanceClass(expr.obj), receiverStyle = expr.methodName == "run")
         } else {
             if (expr.methodName == "new" && expressionPath(expr.obj)?.let { nativeFactory(it) } != null) {
                 bindings.type(expressionPath(expr.obj)!!)
             } else receiverInstanceClass(expr.obj)?.let { receiverClass ->
-                if (types.classInfo(receiverClass)?.native == true) bindings.method(receiverClass, expr.methodName)?.second
+                if (receiverClass == RESULT_CLASS && expr.methodName in setOf("onSuccess", "onFailure")) RESULT_CLASS
+                else if (types.classInfo(receiverClass)?.native == true) bindings.method(receiverClass, expr.methodName)?.second
                 else types.methodReturnClass(receiverClass, expr.methodName)
             }
         }
+        is SafeChainExpr -> receiverInstanceClass(expr.steps.fold(expr.base) { current, step ->
+            when (step) {
+                is ChainProp -> PropertyAccessExpr(current, step.name)
+                is ChainCall -> MethodCallExpr(current, step.name, step.args)
+            }
+        })
+        is ElvisExpr -> receiverInstanceClass(expr.left) ?: receiverInstanceClass(expr.right)
+        is IfExpr -> receiverInstanceClass(expr.thenExpr)?.takeIf { it == receiverInstanceClass(expr.elseExpr) }
         else -> null
     }
 
@@ -369,7 +456,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
      * variable — needed for a scope-function receiver that may be a fresh expression or a
      * previously-declared instance. */
     private fun receiverInstanceClass(expr: Expression): String? =
-        (expr as? Identifier)?.let { types.instanceClassOf(it.name) } ?: instanceClassOfExpr(expr)
+        instanceClassOfExpr(expr)
+
+    private fun hasDeclaredMethod(expr: MethodCallExpr): Boolean =
+        receiverInstanceClass(expr.obj)?.let { types.classInfo(it)?.methodReturnTypes?.containsKey(expr.methodName) } == true
 
     private fun expressionPath(expr: Expression): String? = when (expr) {
         is Identifier -> expr.name
@@ -379,6 +469,51 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
 
     private fun nativeFactory(path: String): String? =
         bindings.factory(path)?.takeIf { types.classInfo(path)?.native != false && types.env.lookup(path) == null }
+
+    private fun receiverParameterName(): String =
+        if (types.currentReceiver() == null) "self" else "__receiver${++receiverCounter}"
+
+    /** Infer a scope block's returned instance without emitting it or evaluating its receiver. */
+    private fun scopeResultClass(block: Expression, receiverClass: String?, receiverStyle: Boolean = false, noParams: Boolean = false): String? {
+        if (block !is LambdaExpr) return (block as? FunctionRef)?.let { types.functionReturnClass(it.name) }
+        types.pushScope()
+        if (receiverStyle) {
+            types.declareReceiver("__scopeReceiver", receiverClass ?: "")
+        } else if (!noParams) {
+            val parameter = block.params.firstOrNull() ?: "it"
+            types.env.declare(parameter, TypeName.ANY)
+            receiverClass?.let { types.declareInstance(parameter, it) }
+        }
+        val result = blockResultClass(block.body)
+        types.popScope()
+        return result
+    }
+
+    private fun blockResultClass(block: Block): String? {
+        for (statement in block.body.dropLast(1)) {
+            if (statement is VariableDecl) {
+                val inferred = receiverInstanceClass(statement.init)
+                types.env.declare(statement.name, statement.varType ?: types.inferExprType(statement.init))
+                types.declareInstance(statement.name, statement.rawType)
+                inferred?.let { types.declareInstance(statement.name, it) }
+            }
+        }
+        return when (val last = block.body.lastOrNull()) {
+            is ExpressionStatement -> receiverInstanceClass(last.expr)
+            is ReturnStatement -> last.expr?.let { receiverInstanceClass(it) }
+            is IfStatement -> {
+                fun branch(block: Block): String? {
+                    types.pushScope()
+                    val result = blockResultClass(block)
+                    types.popScope()
+                    return result
+                }
+                val left = branch(last.thenBranch)
+                left?.takeIf { last.elseBranch != null && it == branch(last.elseBranch) }
+            }
+            else -> null
+        }
+    }
 
     private fun emitAssignment(stmt: Assignment) {
         val targetStr = emitAssignTarget(stmt.target)
@@ -401,7 +536,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     }
 
     private fun emitAssignTarget(target: AssignTarget): String = when (target) {
-        is NameTarget -> target.name
+        is NameTarget -> emitIdentifier(target.name)
         is PropertyTarget -> emitPropertyAccess(target.obj, target.name)
         is IndexTarget -> {
             val indexStr = emitExpression(target.index)
@@ -418,19 +553,20 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         is DoubleLiteral -> formatDouble(expr.value)
         is BooleanLiteral -> expr.value.toString()
         NullLiteral -> "nil"
-        is Identifier -> if (types.env.lookup(expr.name) == null && types.instanceClassOf(expr.name) == null && types.classInfo(expr.name)?.native != false)
-            bindings.luaName(expr.name) ?: expr.name else expr.name
+        is Identifier -> emitIdentifier(expr.name)
         is ParenExpr -> "(${emitExpression(expr.expr)})"
         is UnaryExpr -> if (expr.op == "!") "(not ${emitExpression(expr.expr)})" else "(-${emitExpression(expr.expr)})"
         is StringTemplateLiteral -> emitTemplate(expr)
         is BinaryExpr -> emitBinary(expr)
         is CallExpr -> emitCall(expr)
-        is PropertyAccessExpr -> if (isLengthProperty(expr.name)) "#${emitExpression(expr.obj)}" else emitPropertyAccess(expr.obj, expr.name)
+        is PropertyAccessExpr -> if (isLengthProperty(expr.name) && receiverInstanceClass(expr.obj).let { it == null || it in setOf("String", "List") })
+            "#${emitExpression(expr.obj)}" else emitPropertyAccess(expr.obj, expr.name)
         is MethodCallExpr -> emitMethodCallTarget(expr)
-        is FunctionRef -> expr.name
+        is FunctionRef -> if (expr.name == "println") "print" else expr.name
         is IfExpr -> "(${emitExpression(expr.cond)} and ${emitExpression(expr.thenExpr)} or ${emitExpression(expr.elseExpr)})"
         is WhenExpr -> WhenEmitter.emitWhenExpr(expr, this)
         is ElvisExpr -> emitElvis(expr)
+        is ReturnExpr -> error("An Elvis return must be a local variable initializer or a guard statement")
         is SafeChainExpr -> emitSafeChain(expr)
         is NotNullAssertExpr -> emitNotNullAssert(expr)
         is LambdaExpr -> emitLambda(expr)
@@ -446,6 +582,15 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         val reserved = setOf("and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while")
         return if (name.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) && name !in reserved) "$target.$name"
         else "$target[${quoteLuaString(name, style.quoteStyle)}]"
+    }
+
+    private fun emitIdentifier(name: String): String {
+        if (name == "self") return types.currentReceiver() ?: name
+        types.memberReceiver(name)?.let { receiver ->
+            return if (isLengthProperty(name) && types.instanceClassOf(receiver) in setOf("String", "List")) "#$receiver" else "$receiver.$name"
+        }
+        return if (types.env.lookup(name) == null && types.instanceClassOf(name) == null && types.classInfo(name)?.native != false)
+            bindings.luaName(name) ?: name else name
     }
 
     /** `arr[i]` -> `arr[(i) + 1]` for a *list* index, but `m["key"]` stays unshifted for a *map*
@@ -470,11 +615,14 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         elementClass: String? = null,
         implicitParamName: String = "it",
         returnReceiver: Boolean = false,
+        receiverScope: Boolean = false,
+        noParams: Boolean = false,
     ): String {
-        val paramNames = expr.params.ifEmpty { listOf(implicitParamName) }
+        val paramNames = if (noParams) emptyList() else expr.params.ifEmpty { listOf(implicitParamName) }
         types.pushScope()
         paramNames.forEach { types.env.declare(it, TypeName.ANY) }
         if (elementClass != null) types.declareInstance(paramNames[0], elementClass)
+        if (receiverScope) types.declareReceiver(paramNames[0], elementClass ?: "")
 
         val savedOut = out
         val savedIndent = indentLevel
@@ -482,7 +630,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         indentLevel = savedIndent + 1
         val stmts = expr.body.body
         stmts.forEachIndexed { i, stmt ->
-            if (!returnReceiver && i == stmts.lastIndex && stmt is ExpressionStatement) line("return ${emitExpression(stmt.expr)}")
+            if (!returnReceiver && i == stmts.lastIndex) emitLambdaResult(stmt)
             else emitStatement(stmt)
         }
         if (returnReceiver) line("return ${paramNames[0]}")
@@ -492,6 +640,29 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
 
         types.popScope()
         return "function(${paramNames.joinToString(", ")})\n${bodyLua}${indentUnit.repeat(savedIndent)}end"
+    }
+
+    private fun emitLambdaResult(statement: Statement) {
+        when {
+            statement is ExpressionStatement -> line("return ${emitExpression(statement.expr)}")
+            statement is IfStatement && statement.elseBranch != null -> {
+                fun branch(block: Block) {
+                    pushIndent()
+                    types.pushScope()
+                    block.body.forEachIndexed { index, nested ->
+                        if (index == block.body.lastIndex) emitLambdaResult(nested) else emitStatement(nested)
+                    }
+                    types.popScope()
+                    popIndent()
+                }
+                line("if ${emitExpression(statement.cond)} then")
+                branch(statement.thenBranch)
+                line("else")
+                branch(statement.elseBranch)
+                line("end")
+            }
+            else -> emitStatement(statement)
+        }
     }
 
     private fun emitNotNullAssert(expr: NotNullAssertExpr): String =
@@ -511,36 +682,35 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             "end)()"
 
     private fun emitSafeChain(expr: SafeChainExpr): String {
+        val temporary = "__v"
         val sb = StringBuilder("(function()\n")
-        sb.append("${indentUnit}local __v = ${emitExpression(expr.base)}\n")
+        sb.append("${indentUnit}local $temporary = ${emitExpression(expr.base)}\n")
+        types.pushScope()
+        types.env.declare(temporary, TypeName.ANY)
+        var current = expr.base
         for (step in expr.steps) {
             val safe = when (step) {
                 is ChainProp -> step.safe
                 is ChainCall -> step.safe
             }
-            if (safe) sb.append("${indentUnit}if __v == nil then return nil end\n")
+            if (safe) sb.append("${indentUnit}if $temporary == nil then return nil end\n")
+            types.forgetInstance(temporary)
+            receiverInstanceClass(current)?.let { types.declareInstance(temporary, it) }
             when (step) {
-                is ChainProp -> sb.append(if (isLengthProperty(step.name)) "${indentUnit}__v = #__v\n" else "${indentUnit}__v = __v.${step.name}\n")
-                is ChainCall -> sb.append(emitSafeChainCallStep(step))
+                is ChainProp -> {
+                    sb.append("${indentUnit}$temporary = ${emitExpression(PropertyAccessExpr(Identifier(temporary), step.name))}\n")
+                    current = PropertyAccessExpr(current, step.name)
+                }
+                is ChainCall -> {
+                    sb.append("${indentUnit}$temporary = ${emitMethodCallTarget(MethodCallExpr(Identifier(temporary), step.name, step.args))}\n")
+                    current = MethodCallExpr(current, step.name, step.args)
+                }
             }
         }
-        sb.append("${indentUnit}return __v\n")
+        types.popScope()
+        sb.append("${indentUnit}return $temporary\n")
         sb.append("end)()")
         return sb.toString()
-    }
-
-    /** Deliberately simpler than [emitMethodCallTarget] — no class-instance colon-call
-     * resolution or collection-helper routing mid-chain, since there's no single receiver
-     * expression here to resolve a tracked class against, only the running `__v`. */
-    private fun emitSafeChainCallStep(step: ChainCall): String = when {
-        step.args.isEmpty() && step.name in NUMERIC_CAST_NAMES -> ""
-        step.args.isEmpty() && step.name == "toString" -> "${indentUnit}__v = tostring(__v)\n"
-        step.name == "let" && step.args.size == 1 -> {
-            val lambdaArg = step.args[0].toExpression()
-            val fnStr = if (lambdaArg is LambdaExpr) emitLambda(lambdaArg) else emitExpression(lambdaArg)
-            "${indentUnit}__v = ($fnStr)(__v)\n"
-        }
-        else -> "${indentUnit}__v = __v.${step.name}(${emitArgList(step.args)})\n"
     }
 
     private fun emitBinary(expr: BinaryExpr): String {
@@ -565,6 +735,24 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     }
 
     private fun emitCall(expr: CallExpr): String {
+        types.memberReceiver(expr.callee)?.let { receiver ->
+            val className = types.instanceClassOf(receiver)
+            val info = className?.let { types.classInfo(it) }
+            val colon = if (info?.native == true) bindings.method(className, expr.callee)?.first == true
+                else expr.callee in (info?.methodNames ?: emptySet())
+            return "$receiver${if (colon) ":" else "."}${expr.callee}(${emitArgList(expr.args)})"
+        }
+        if (expr.callee == "runCatching" && expr.args.size == 1) {
+            usesResult = true
+            val block = expr.args.single().toExpression()
+            val function = if (block is LambdaExpr) emitLambda(block, noParams = true) else emitExpression(block)
+            return "__runCatching($function)"
+        }
+        if (expr.callee == "run" && expr.args.size == 1) {
+            val block = expr.args.single().toExpression()
+            val function = if (block is LambdaExpr) emitLambda(block, noParams = true) else emitExpression(block)
+            return "($function)()"
+        }
         if (expr.callee == "listOf") {
             return "{${expr.args.joinToString(", ") { emitExpression(it.toExpression()) }}}"
         }
@@ -585,7 +773,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             val receiver = expr.args[0].toExpression()
             val lambdaArg = expr.args[1].toExpression()
             if (lambdaArg is LambdaExpr) {
-                val fnStr = emitLambda(lambdaArg.copy(params = emptyList()), receiverInstanceClass(receiver), implicitParamName = "self")
+                val fnStr = emitLambda(lambdaArg.copy(params = emptyList()), receiverInstanceClass(receiver),
+                    implicitParamName = receiverParameterName(), receiverScope = true)
                 return "($fnStr)(${emitExpression(receiver)})"
             }
         }

@@ -71,11 +71,37 @@ class ClassFeature : StatementParser {
         val properties = mutableListOf<kt2lua.transpiler.VariableDecl>()
         if (ctx.match(TokenType.LBRACE)) {
             while (!ctx.check(TokenType.RBRACE)) {
+                if (ctx.match(TokenType.SEMICOLON)) continue
+                val subscription = if (ctx.match(TokenType.AT)) {
+                    val annotation = ctx.expectIdentifierName()
+                    require(annotation == "Subscribe") { "Unsupported annotation @$annotation" }
+                    var event: String? = null
+                    if (ctx.check(TokenType.LPAREN)) {
+                        val args = ctx.parseCallArgs()
+                        require(args.size <= 1) { "@Subscribe accepts at most one event name" }
+                        args.singleOrNull()?.let { argument ->
+                            val expression = when (argument) {
+                                is kt2lua.transpiler.PositionalArg -> argument.expr
+                                is kt2lua.transpiler.NamedArg -> {
+                                    require(argument.name == "event") { "@Subscribe expects an event argument" }
+                                    argument.expr
+                                }
+                                else -> error("@Subscribe expects a literal event name")
+                            }
+                            val string = expression as? kt2lua.transpiler.StringTemplateLiteral
+                            require(string != null && string.parts.all { it is kt2lua.transpiler.TemplateExprPart.Text }) {
+                                "@Subscribe expects a literal event name"
+                            }
+                            event = string.parts.joinToString("") { (it as kt2lua.transpiler.TemplateExprPart.Text).text }.ifEmpty { null }
+                        }
+                    }
+                    kt2lua.transpiler.Subscription(event)
+                } else null
                 skipOpenOverrideModifiers(ctx)
                 val isPrivate = ctx.match(TokenType.PRIVATE)
                 when {
-                    ctx.check(TokenType.FUN) -> methods.add(ctx.parseFunctionDecl(isPrivate))
-                    ctx.check(TokenType.VAL) || ctx.check(TokenType.VAR) -> properties.add(ctx.parseVariableDecl(isPrivate))
+                    ctx.check(TokenType.FUN) -> methods.add(ctx.parseFunctionDecl(isPrivate).copy(subscription = subscription))
+                    (ctx.check(TokenType.VAL) || ctx.check(TokenType.VAR)) && subscription == null -> properties.add(ctx.parseVariableDecl(isPrivate))
                     else -> throw ParseException(
                         "Only 'fun'/'val'/'var' members are supported in a class body in this subset",
                         ctx.current().line,

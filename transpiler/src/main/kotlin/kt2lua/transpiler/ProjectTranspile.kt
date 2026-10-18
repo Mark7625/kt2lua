@@ -75,7 +75,9 @@ private fun classInfoAcrossFiles(programs: List<Program>): Map<String, ClassInfo
                 methodReturnTypes = (superInfo?.methodReturnTypes ?: emptyMap()) +
                     stmt.methods.associate { it.name to returnTypes.rawReturnTypeOf(it) },
                 propertyTypes = (superInfo?.propertyTypes ?: emptyMap()) +
+                    stmt.params.associate { it.name to "" } +
                     stmt.properties.associate { it.name to it.rawType },
+                superClass = stmt.superClass,
             )
         }
     }
@@ -231,6 +233,7 @@ private fun collectFreeNames(expr: Expression, out: MutableSet<String>) {
             collectFreeNames(expr.left, out)
             collectFreeNames(expr.right, out)
         }
+        is ReturnExpr -> expr.value?.let { collectFreeNames(it, out) }
         is NotNullAssertExpr -> collectFreeNames(expr.expr, out)
         is LambdaExpr -> for (s in expr.body.body) collectFreeNames(s, out)
         is IndexExpr -> {

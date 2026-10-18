@@ -56,6 +56,7 @@ data class ClassInfo(
     val methodReturnTypes: Map<String, String> = emptyMap(),
     val propertyTypes: Map<String, String> = emptyMap(),
     val native: Boolean = false,
+    val superClass: String? = null,
 )
 
 private val BUILTIN_SIGS = mapOf(
@@ -74,6 +75,22 @@ class TypeAnalyzer {
     private val classes = mutableMapOf<String, ClassInfo>()
 
     private val instanceScopes = mutableListOf(mutableMapOf<String, String>())
+    private val receiverScopes = mutableListOf(mutableListOf<Pair<String, String>>())
+
+    fun declareReceiver(name: String, className: String) {
+        declareInstance(name, className)
+        receiverScopes.last().add(name to className)
+    }
+
+    fun currentReceiver(): String? = receiverScopes.asReversed().firstNotNullOfOrNull { it.lastOrNull()?.first }
+
+    /** Lexical locals win; otherwise the nearest Kotlin receiver that owns the member wins. */
+    fun memberReceiver(name: String): String? {
+        if (env.lookup(name) != null) return null
+        return receiverScopes.asReversed().flatMap { it.asReversed() }.firstOrNull { (_, type) ->
+            classes[type]?.let { name in it.propertyTypes || name in it.methodReturnTypes || name in it.methodNames } == true
+        }?.first
+    }
 
     /** Which class (if any) a `listOf(...)`'s *elements* are all known to be — lets a
      * `.forEach`/`.map`/`.filter` lambda's implicit parameter be tracked as that class too. */
@@ -82,12 +99,14 @@ class TypeAnalyzer {
     fun pushScope() {
         env.push()
         instanceScopes.add(mutableMapOf())
+        receiverScopes.add(mutableListOf())
         listElementScopes.add(mutableMapOf())
     }
 
     fun popScope() {
         env.pop()
         instanceScopes.removeAt(instanceScopes.size - 1)
+        receiverScopes.removeAt(receiverScopes.size - 1)
         listElementScopes.removeAt(listElementScopes.size - 1)
     }
 
@@ -102,6 +121,8 @@ class TypeAnalyzer {
         }
         return null
     }
+
+    fun forgetInstance(name: String) { instanceScopes.last().remove(name) }
 
     fun declareListElement(name: String, className: String) {
         if (className in classes) listElementScopes.last()[name] = className
@@ -153,7 +174,9 @@ class TypeAnalyzer {
                         methodReturnTypes = (superInfo?.methodReturnTypes ?: emptyMap()) +
                             stmt.methods.associate { it.name to rawReturnTypeOf(it) },
                         propertyTypes = (superInfo?.propertyTypes ?: emptyMap()) +
+                            stmt.params.associate { it.name to "" } +
                             stmt.properties.associate { it.name to it.rawType },
+                        superClass = stmt.superClass,
                     )
                 }
                 else -> {}
@@ -193,6 +216,7 @@ class TypeAnalyzer {
             resultTypes.reduce { a, b -> combineBranchTypes(a, b) }
         }
         is ElvisExpr -> combineBranchTypes(inferExprType(expr.left), inferExprType(expr.right))
+        is ReturnExpr -> TypeName.ANY
         is SafeChainExpr -> TypeName.ANY
         is NotNullAssertExpr -> inferExprType(expr.expr)
         is LambdaExpr -> TypeName.ANY

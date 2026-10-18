@@ -65,6 +65,7 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
     fun parseProgram(): Program {
         val body = mutableListOf<Statement>()
         while (!isAtEnd()) {
+            if (match(TokenType.SEMICOLON)) continue
             if (check(TokenType.PACKAGE)) {
                 skipPackageDirective()
                 continue
@@ -92,6 +93,7 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
             segments.add(expectIdentifierName())
         }
         val alias = if (match(TokenType.AS)) expectIdentifierName() else segments.last()
+        if (segments.joinToString(".") == "com.mark.runescape.extended.Subscribe") return null
         if (bindings.type(segments.joinToString(".")) != null) return null
         val constantPrefix = segments.joinToString(".") + "."
         val importedConstants = literalConstants.filterKeys { it.startsWith(constantPrefix) }
@@ -212,7 +214,10 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
     override fun parseBlock(): Block {
         expect(TokenType.LBRACE)
         val body = mutableListOf<Statement>()
-        while (!check(TokenType.RBRACE)) body.add(parseStatement())
+        while (!check(TokenType.RBRACE)) {
+            if (match(TokenType.SEMICOLON)) continue
+            body.add(parseStatement())
+        }
         expect(TokenType.RBRACE)
         return Block(body)
     }
@@ -221,8 +226,8 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
         if (check(TokenType.LBRACE)) parseBlock() else Block(listOf(parseStatement()))
 
     private fun parseReturnStatement(): ReturnStatement {
-        expect(TokenType.RETURN)
-        return if (canStartExpression()) ReturnStatement(parseExpression()) else ReturnStatement(null)
+        val keyword = expect(TokenType.RETURN)
+        return if (current().line == keyword.line && canStartExpression()) ReturnStatement(parseExpression()) else ReturnStatement(null)
     }
 
     private fun canStartExpression(): Boolean = when (current().type) {
@@ -391,6 +396,7 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
                 ParenExpr(expr)
             }
             TokenType.IF -> ifFeature.parseIfExpr(this)
+            TokenType.RETURN -> ReturnExpr(parseReturnStatement().expr)
             TokenType.WHEN -> whenFeature.parseWhenExpr(this)
             // Lua's colon-method convention names the implicit receiver `self`, not `this` —
             // emitting it as plain `self` lets `this.x` flow through the ordinary
@@ -491,7 +497,10 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
             expect(TokenType.ARROW)
         }
         val body = mutableListOf<Statement>()
-        while (!check(TokenType.RBRACE)) body.add(parseStatement())
+        while (!check(TokenType.RBRACE)) {
+            if (match(TokenType.SEMICOLON)) continue
+            body.add(parseStatement())
+        }
         expect(TokenType.RBRACE)
         return LambdaExpr(params, Block(body))
     }

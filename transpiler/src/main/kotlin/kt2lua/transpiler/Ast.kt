@@ -63,7 +63,10 @@ data class FunctionDecl(
     /** Mirrors [Param.rawType] for the return type, so `val c = someFn()` can be tracked as an
      * instance of a known class. Empty when there's no explicit return type annotation. */
     val rawReturnType: String = "",
+    val subscription: Subscription? = null,
 ) : Statement()
+
+data class Subscription(val event: String? = null)
 
 data class VariableDecl(
     val name: String,
@@ -179,6 +182,9 @@ data class SafeChainExpr(val base: Expression, val steps: List<ChainStep>) : Exp
 /** Compiles to an explicit `~= nil` check, *not* Lua's `a or b` idiom — that idiom treats Lua
  * `false` the same as `nil`, which would be wrong for `someBoolean ?: default`. */
 data class ElvisExpr(val left: Expression, val right: Expression) : Expression()
+
+/** An Elvis guard's early exit; lowered as statements so it exits the containing function. */
+data class ReturnExpr(val value: Expression?) : Expression()
 
 /** `expr!!` — raises a runtime error on `nil` via an IIFE, the only way to evaluate the operand
  * once and branch on it inline since Lua has no postfix operator for this. */

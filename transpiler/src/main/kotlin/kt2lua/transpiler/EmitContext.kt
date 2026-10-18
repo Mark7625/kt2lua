@@ -14,6 +14,7 @@ interface EmitContext {
     fun isDeclBoundary(stmt: Statement): Boolean
 
     fun emitStatement(stmt: Statement)
+    fun emitSubscriptions(decl: ClassDecl)
     fun emitExpression(expr: Expression): String
     fun emitArgList(args: List<CallArg>): String
     fun paramList(fn: FunctionDecl): String
