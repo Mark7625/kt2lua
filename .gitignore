@@ -4,19 +4,6 @@ build/
 *.class
 *.log
 .kotlin/
-# Not part of this repo's own history — the generated RS3 API bindings (and the example built
-# against them) are kept on disk for now since the local build still depends on them, but
-# they're slated to move to their own repo eventually. settings.gradle.kts/build.gradle.kts
-# only include/configure these projects when the directory actually exists, so the kt2lua
-# build itself (cli/test-runner/build-logic) stays buildable without it — CI included.
-/libs/runescape/
-# Generated output from running the root examples/ demos through the CLI (--run/-o) — scratch,
-# always regenerable from the matching .kt file, never meant to be committed.
 /examples/*.lua
-# `/.idea/*` (not `/.idea`) + a negation below — a flat `/.idea` ignore would stop git from
-# ever looking inside the directory at all, which also hides the one file deliberately kept:
-# icon.png, so the project shows kt2lua's own icon instead of a generic one in IntelliJ's
-# project list/window frame for anyone who opens this repo there.
 /.idea/*
 !/.idea/icon.png
-/scripts

@@ -21,11 +21,13 @@ import java.io.File
 import java.util.Properties
 import kotlin.system.exitProcess
 
-/** kt2lua's own release version — kept in lockstep by hand with the `version = "..."` every
- * build-logic/libs/runescape module declares; there's no single shared source for it yet (see
- * the root README's build-system section), so this is the one place the CLI's own `--version`
- * needs to remember to bump alongside those. */
-private const val VERSION = "0.1.0"
+private object BuildInfo {
+    val version: String = Properties().apply {
+        BuildInfo::class.java.getResourceAsStream("/kt2lua-version.properties")?.use { load(it) }
+    }.getProperty("version", "unknown")
+}
+
+private val VERSION = BuildInfo.version
 
 /** Default output location for both single- and multi-file transpiles when `-o`/`--out` isn't
  * given — relative to the current directory, matching the Gradle plugin's own
