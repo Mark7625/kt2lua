@@ -63,7 +63,7 @@ needed).
 - `gradle-plugin` — the Gradle plugin
 - `cli` — standalone command-line tool
 - `test-runner` — end-to-end tests (transpile, run, diff output)
-- `examples` — small Kotlin → Lua demos
+- `cli/examples` — small Kotlin → Lua demos
 - `libs/runescape` — RS3 API bindings, unrelated to kt2lua itself (see its own README)
 
 ## Building
