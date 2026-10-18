@@ -6,6 +6,7 @@ import kt2lua.transpiler.transpileProject
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.Optional
@@ -19,6 +20,7 @@ import org.gradle.api.tasks.TaskAction
  * structure carries straight through. Processes them all together via [transpileProject], so a
  * reference in one file to another file's top-level declaration gets a `require(...)` call
  * inserted automatically. */
+@CacheableTask
 abstract class TranspileTask : DefaultTask() {
 
     @get:InputDirectory
