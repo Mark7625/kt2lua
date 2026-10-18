@@ -1,0 +1,184 @@
+name: publish
+
+# production -> release pull request -> Maven Central
+#
+# Pushing to production opens or updates a release pull request from release/<version> into the default
+# branch. The first push after a release bumps the patch version; more pushes before it is merged just
+# update the same pull request and keep that version. Merging the pull request publishes to Maven Central,
+# tags the release and creates the GitHub release.
+
+on:
+  push:
+    branches: [production]
+  pull_request:
+    types: [closed]
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  release-pr:
+    if: github.event_name != 'pull_request' && github.ref_name == 'production'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: production
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Check there is something to release
+        id: ahead
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git fetch origin "$DEFAULT_BRANCH" --tags
+          count=$(git rev-list --count "origin/$DEFAULT_BRANCH..HEAD")
+          echo "production is $count commit(s) ahead of $DEFAULT_BRANCH"
+          echo "ahead=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 21
+        if: steps.ahead.outputs.ahead != '0'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build and test
+        if: steps.ahead.outputs.ahead != '0'
+        run: ./gradlew build --no-daemon
+
+      - name: Choose the version
+        id: version
+        if: steps.ahead.outputs.ahead != '0'
+        run: |
+          current=$(grep '^version=' gradle.properties | cut -d= -f2)
+          last=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//' || true)
+          version="$current"
+          if [ "$last" = "$current" ]; then
+            if ! echo "$current" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "cannot bump '$current'; set the version by hand" >&2
+              exit 1
+            fi
+            IFS=. read -r major minor patch <<< "$current"
+            version="$major.$minor.$((patch + 1))"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the release pull request
+        if: steps.ahead.outputs.ahead != '0'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "release/$VERSION"
+          bash .github/scripts/sync-version.sh "$VERSION"
+          git add gradle.properties README.md
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: release v$VERSION"
+          fi
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/release/$VERSION"
+
+          {
+            echo "Merging this publishes **v$VERSION** to Maven Central, tags it and creates the GitHub release."
+            echo
+            echo "### Changes"
+            echo
+            git log "origin/$DEFAULT_BRANCH..HEAD" --reverse --format='- %s' | grep -v '^- chore: release v' || true
+          } > pr-body.md
+
+          number=$(gh pr list --head "release/$VERSION" --base "$DEFAULT_BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -z "$number" ]; then
+            gh pr create --head "release/$VERSION" --base "$DEFAULT_BRANCH" --title "Release v$VERSION" --body-file pr-body.md
+          else
+            gh pr edit "$number" --title "Release v$VERSION" --body-file pr-body.md
+            echo "updated pull request #$number"
+          fi
+
+      - name: Report the build on the release branch
+        if: steps.ahead.outputs.ahead != '0'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
+        run: |
+          # The release branch is production plus a version commit, and production was just built and
+          # tested above. Pull requests opened with the built-in token do not trigger build.yml, so
+          # report the result under the name the branch protection requires.
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$(git rev-parse HEAD)" \
+            -f state=success -f context=build \
+            -f description="Built and tested before the release branch was pushed"
+  publish:
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Read the version
+        id: version
+        run: |
+          version=$(grep '^version=' gradle.properties | cut -d= -f2)
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
+            echo "tag v$version already exists" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test
+        run: ./gradlew build --no-daemon
+
+      - name: Publish to Maven Central
+        run: ./gradlew :all:publishToMavenCentral --no-daemon
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+
+      - name: Tag and create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
+          gh release create "v$VERSION" --title "v$VERSION" --generate-notes
+
+      - name: Bring production up to date with the release
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # production is the release line and may be behind or apart from the default branch.
+          # Take the release commit (the version bump) into it, and nothing else from the default branch.
+          git fetch origin production
+          git checkout -B production origin/production
+          git merge --no-edit "$HEAD_SHA"
+          git push origin production
+
+      - name: Delete the release branch
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH"
