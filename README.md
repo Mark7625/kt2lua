@@ -20,7 +20,7 @@ Published to Maven Central under `io.github.mark7625`:
 ```kotlin
 // build.gradle.kts
 plugins {
-    id("io.github.mark7625.kt2lua") version "0.1.0"
+    id("io.github.mark7625.kt2lua") version "0.1.1"
 }
 
 kt2lua {
@@ -32,7 +32,7 @@ kt2lua {
 To use the transpiler, interpreter and CLI as a library instead:
 
 ```kotlin
-implementation("io.github.mark7625:kt2lua:0.1.0")
+implementation("io.github.mark7625:kt2lua:0.1.1")
 ```
 
 This registers a `transpileKotlinToLua` task that transpiles every `.kt` file under `sourceDir`
