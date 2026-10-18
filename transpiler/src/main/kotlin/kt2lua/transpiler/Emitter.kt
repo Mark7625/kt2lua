@@ -371,7 +371,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT) : EmitContext {
 
     private fun emitAssignTarget(target: AssignTarget): String = when (target) {
         is NameTarget -> target.name
-        is PropertyTarget -> "${emitExpression(target.obj)}.${target.name}"
+        is PropertyTarget -> emitPropertyAccess(target.obj, target.name)
         is IndexTarget -> {
             val indexStr = emitExpression(target.index)
             if (types.inferExprType(target.index) == TypeName.STRING) {
@@ -393,7 +393,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT) : EmitContext {
         is StringTemplateLiteral -> emitTemplate(expr)
         is BinaryExpr -> emitBinary(expr)
         is CallExpr -> emitCall(expr)
-        is PropertyAccessExpr -> if (isLengthProperty(expr.name)) "#${emitExpression(expr.obj)}" else "${emitExpression(expr.obj)}.${expr.name}"
+        is PropertyAccessExpr -> if (isLengthProperty(expr.name)) "#${emitExpression(expr.obj)}" else emitPropertyAccess(expr.obj, expr.name)
         is MethodCallExpr -> emitMethodCallTarget(expr)
         is FunctionRef -> expr.name
         is IfExpr -> "(${emitExpression(expr.cond)} and ${emitExpression(expr.thenExpr)} or ${emitExpression(expr.elseExpr)})"
@@ -404,6 +404,13 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT) : EmitContext {
         is LambdaExpr -> emitLambda(expr)
         is IndexExpr -> emitIndex(expr)
         is ToPairExpr -> "{first = ${emitExpression(expr.first)}, second = ${emitExpression(expr.second)}}"
+    }
+
+    private fun emitPropertyAccess(receiver: Expression, name: String): String {
+        val target = emitExpression(receiver)
+        val reserved = setOf("and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while")
+        return if (name.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) && name !in reserved) "$target.$name"
+        else "$target[${quoteLuaString(name, style.quoteStyle)}]"
     }
 
     /** `arr[i]` -> `arr[(i) + 1]` for a *list* index, but `m["key"]` stays unshifted for a *map*

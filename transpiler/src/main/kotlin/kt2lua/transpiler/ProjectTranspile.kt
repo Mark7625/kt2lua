@@ -10,8 +10,9 @@ data class ProjectTranspileResult(val files: Map<String, String>)
  * `require(...)` calls they need. Only auto-requires when a free identifier exactly matches
  * another file's top-level, non-private declaration name; a name declared in more than one file
  * is ambiguous and never auto-required for either. */
-fun transpileProject(files: List<ProjectFile>, style: EmitStyle = EmitStyle.DEFAULT): ProjectTranspileResult {
-    val parsed = files.map { it.name to Parser(Lexer(it.source).tokenize()).parseProgram() }
+fun transpileProject(files: List<ProjectFile>, style: EmitStyle = EmitStyle.DEFAULT, literalConstants: Map<String, String> = emptyMap()): ProjectTranspileResult {
+    require(files.map { it.name }.distinct().size == files.size) { "Duplicate Lua module paths in project inputs" }
+    val parsed = files.map { it.name to Parser(Lexer(it.source).tokenize(), literalConstants).parseProgram() }
     val globalClassInfo = classInfoAcrossFiles(parsed.map { it.second })
 
     val owner = mutableMapOf<String, String>()

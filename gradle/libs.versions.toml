@@ -1,8 +1,6 @@
 [versions]
-# Single source of truth for the Kotlin/JDK versions every module in this repo builds
-# against — both the main build (settings.gradle.kts) and the build-logic composite build
-# (build-logic/settings.gradle.kts) point their version catalog at *this* file, so there's
-# nowhere else a version number can drift out of sync.
+# Shared Kotlin plugin and JDK versions for every module, including nested API/example
+# modules. The root build applies the JDK toolchain and bytecode targets recursively.
 kotlin = "2.3.0"
 jdk = "17"
 

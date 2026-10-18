@@ -19,3 +19,4 @@ build/
 # project list/window frame for anyone who opens this repo there.
 /.idea/*
 !/.idea/icon.png
+/scripts

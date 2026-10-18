@@ -1,0 +1,5 @@
+initialized
+1
+2
+initialized
+1

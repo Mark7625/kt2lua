@@ -1,19 +1,28 @@
 import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
 
 plugins {
     alias(libs.plugins.kotlin.jvm) apply false
 }
 
-// Every subproject builds against the exact same JDK, not just the same bytecode *target* —
-// `jvmToolchain(...)` pins the actual compiler/JDK used (Gradle provisions/selects it), rather
-// than just asking whatever JDK happens to be running Gradle to emit older bytecode. The
-// version itself comes from gradle/libs.versions.toml, the one place it's declared.
+// subprojects includes every nesting level. Both compilers and their bytecode targets use
+// the catalog's JDK version; Kotlin's plugin version also comes from that same catalog.
+val sharedJdkVersion = libs.versions.jdk.get().toInt()
 subprojects {
+    plugins.withId("java") {
+        extensions.configure<JavaPluginExtension> {
+            toolchain.languageVersion.set(JavaLanguageVersion.of(sharedJdkVersion))
+        }
+        tasks.withType<JavaCompile>().configureEach {
+            options.release.set(sharedJdkVersion)
+        }
+    }
     plugins.withId("org.jetbrains.kotlin.jvm") {
         extensions.configure<KotlinJvmProjectExtension> {
-            jvmToolchain(libs.versions.jdk.get().toInt())
+            jvmToolchain(sharedJdkVersion)
+            compilerOptions.jvmTarget.set(JvmTarget.fromTarget(sharedJdkVersion.toString()))
         }
     }
 }
@@ -25,9 +34,9 @@ configure(listOf(project(":common"), project(":transpiler"), project(":interpret
     version = "0.1.0"
 }
 
-// The three independently-published `runescape-*` API binding modules share everything about
+// The independently-published `runescape-*` API binding modules share everything about
 // how they're published — only their artifact name/description differ, both derived from
-// `project.name` ("core"/"extended"/"prettyui") below. Each module's own build.gradle.kts still
+// `project.name` ("core"/"extended"/"prettyui"/"ids") below. Each module's own build.gradle.kts still
 // owns its `plugins {}`/`dependencies {}` (that part *does* differ — e.g. `extended`/`prettyui`
 // depend on `core`).
 //
@@ -41,9 +50,10 @@ if (file("libs/runescape").exists()) {
         project(":libs:runescape:core"),
         project(":libs:runescape:extended"),
         project(":libs:runescape:prettyui"),
+        project(":libs:runescape:ids"),
     )
     configure(runescapeLibs) {
-        group = "com.fluxious.runescape"
+        group = "com.mark.runescape"
         version = "0.1.0"
 
         plugins.withId("maven-publish") {

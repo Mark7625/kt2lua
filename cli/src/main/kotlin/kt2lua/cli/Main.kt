@@ -12,9 +12,12 @@ import kt2lua.transpiler.ParseException
 import kt2lua.transpiler.ProjectFile
 import kt2lua.transpiler.ProjectTranspileResult
 import kt2lua.transpiler.discoverProjectFiles
+import kt2lua.transpiler.projectFileForSource
+import kt2lua.transpiler.withLuaLayout
 import kt2lua.transpiler.transpile
 import kt2lua.transpiler.transpileProject
 import java.io.File
+import java.util.Properties
 import kotlin.system.exitProcess
 
 /** kt2lua's own release version — kept in lockstep by hand with the `version = "..."` every
@@ -29,7 +32,7 @@ private const val VERSION = "0.1.0"
  * scattered alongside hand-written sources). */
 private const val DEFAULT_OUT_DIR = "build/dist"
 
-private val KNOWN_FLAGS = setOf("-o", "--out", "--run", "--mock-globals", "--style", "-h", "--help", "-v", "--version")
+private val KNOWN_FLAGS = setOf("-o", "--out", "--run", "--mock-globals", "--style", "--constants", "--package-root", "--lowercase-files", "-h", "--help", "-v", "--version")
 
 fun main(args: Array<String>) {
     if (args.isEmpty()) {
@@ -40,8 +43,11 @@ fun main(args: Array<String>) {
     val inputPaths = mutableListOf<String>()
     var outputPath: String? = null
     var run = false
+    var rootPackage: String? = null
+    var lowercaseFiles = false
     var mockGlobals: List<String> = emptyList()
     var stylePath: String? = null
+    val literalConstants = mutableMapOf<String, String>()
     var i = 0
     while (i < args.size) {
         val arg = args[i]
@@ -54,6 +60,25 @@ fun main(args: Array<String>) {
                 i++
             }
             "--run" -> run = true
+            "--package-root" -> {
+                rootPackage = args.getOrNull(i + 1) ?: usageError("--package-root requires a package name")
+                if (!rootPackage.matches(Regex("[A-Za-z_][A-Za-z_0-9]*(\\.[A-Za-z_][A-Za-z_0-9]*)*"))) {
+                    usageError("Invalid root package: $rootPackage")
+                }
+                i++
+            }
+            "--lowercase-files" -> lowercaseFiles = true
+            "--constants" -> {
+                val file = File(args.getOrNull(i + 1) ?: usageError("--constants requires a .properties path"))
+                val properties = Properties()
+                try {
+                    file.reader(Charsets.UTF_8).use { properties.load(it) }
+                } catch (e: Exception) {
+                    usageError("Cannot read constants ${file.path}: ${e.message}")
+                }
+                for (key in properties.stringPropertyNames()) literalConstants[key] = properties.getProperty(key)
+                i++
+            }
             "--mock-globals" -> {
                 val value = args.getOrNull(i + 1) ?: usageError("--mock-globals requires a comma-separated name list")
                 mockGlobals = value.split(",").map { it.trim() }.filter { it.isNotEmpty() }
@@ -104,12 +129,12 @@ fun main(args: Array<String>) {
 
     if (inputPaths.size == 1 && File(inputPaths[0]).isDirectory) {
         if (run) usageError("--run isn't supported when transpiling a directory (no single entry point to run)")
-        transpileDirectory(inputPaths[0], outputPath, style)
+        transpileDirectory(inputPaths[0], outputPath, style, literalConstants, rootPackage, lowercaseFiles)
     } else if (inputPaths.size == 1) {
-        transpileSingleFile(inputPaths[0], outputPath, run, style)
+        transpileSingleFile(inputPaths[0], outputPath, run, style, literalConstants, rootPackage, lowercaseFiles)
     } else {
         if (run) usageError("--run isn't supported with multiple input files (no single entry point to run)")
-        transpileProjectFiles(inputPaths, outputPath, style)
+        transpileProjectFiles(inputPaths, outputPath, style, literalConstants, rootPackage, lowercaseFiles)
     }
 }
 
@@ -124,16 +149,17 @@ private fun usageError(message: String): Nothing {
     exitProcess(1)
 }
 
-private fun transpileSingleFile(inputPath: String, outputPath: String?, run: Boolean, style: EmitStyle) {
+private fun transpileSingleFile(inputPath: String, outputPath: String?, run: Boolean, style: EmitStyle, literalConstants: Map<String, String>, rootPackage: String?, lowercaseFiles: Boolean) {
     val source = File(inputPath).readText()
     val result = try {
-        transpile(source, style)
+        transpile(source, style, literalConstants)
     } catch (e: Exception) {
         System.err.println("kt2lua: ${diagnosticFor(inputPath, e)}")
         exitProcess(1)
     }
 
-    val resolvedOut = File(outputPath ?: "$DEFAULT_OUT_DIR/${File(inputPath).nameWithoutExtension}.lua")
+    val moduleName = projectFileForSource(File(inputPath).nameWithoutExtension, source).withLuaLayout(rootPackage, lowercaseFiles).name
+    val resolvedOut = File(outputPath ?: "$DEFAULT_OUT_DIR/$moduleName.lua")
     resolvedOut.parentFile?.mkdirs()
     resolvedOut.writeText(result.code)
     println("Wrote ${resolvedOut.path}")
@@ -153,33 +179,32 @@ private fun transpileSingleFile(inputPath: String, outputPath: String?, run: Boo
  * cross-file references and insert the `require(...)` calls they need automatically — the thing
  * a single-file `kt2lua file.kt -o file.lua` invocation structurally can't do, since it never
  * sees any other file's declarations. `-o` here names an output *directory*, not a file: each
- * input's own base name (no `.kt`) becomes `<outDir>/<name>.lua`, and that same base name is
- * also what sibling files `require(...)` it as. Defaults to [DEFAULT_OUT_DIR] when `-o` isn't
+ * input's package plus base name becomes `<outDir>/<package/path>/<name>.lua`, and that
+ * same module path is used by sibling `require(...)` calls. Defaults to [DEFAULT_OUT_DIR] when `-o` isn't
  * given, same as the single-file case.
  */
-private fun transpileProjectFiles(inputPaths: List<String>, outputPath: String?, style: EmitStyle) {
+private fun transpileProjectFiles(inputPaths: List<String>, outputPath: String?, style: EmitStyle, literalConstants: Map<String, String>, rootPackage: String?, lowercaseFiles: Boolean) {
     val projectFiles = inputPaths.map { path ->
-        ProjectFile(File(path).nameWithoutExtension, File(path).readText())
+        projectFileForSource(File(path).nameWithoutExtension, File(path).readText())
     }
-    writeProject(projectFiles, outputPath, style)
+    writeProject(projectFiles.map { it.withLuaLayout(rootPackage, lowercaseFiles) }, outputPath, style, literalConstants)
 }
 
 /**
  * Transpiles every `.kt` file under [dirPath], recursively — the whole-package-tree
- * counterpart of [transpileProjectFiles]. A file's path relative to [dirPath] (minus `.kt`,
- * slash-separated) becomes its [ProjectFile.name], so `<dirPath>/pkg/Thing.kt` ends up at
- * `<outDir>/pkg/Thing.lua`: the Kotlin source's directory layout carries straight through to
- * the generated Lua, instead of every file flattening into one directory.
+ * counterpart of [transpileProjectFiles]. Declared Kotlin packages determine module paths;
+ * files without a package retain their paths relative to [dirPath]. Optional layout flags
+ * strip the chosen root package and lowercase filenames before requires are resolved.
  */
-private fun transpileDirectory(dirPath: String, outputPath: String?, style: EmitStyle) {
+private fun transpileDirectory(dirPath: String, outputPath: String?, style: EmitStyle, literalConstants: Map<String, String>, rootPackage: String?, lowercaseFiles: Boolean) {
     val projectFiles = discoverProjectFiles(File(dirPath))
     if (projectFiles.isEmpty()) usageError("No .kt files found under $dirPath")
-    writeProject(projectFiles, outputPath, style)
+    writeProject(projectFiles.map { it.withLuaLayout(rootPackage, lowercaseFiles) }, outputPath, style, literalConstants)
 }
 
-private fun writeProject(projectFiles: List<ProjectFile>, outputPath: String?, style: EmitStyle) {
+private fun writeProject(projectFiles: List<ProjectFile>, outputPath: String?, style: EmitStyle, literalConstants: Map<String, String>) {
     val result: ProjectTranspileResult = try {
-        transpileProject(projectFiles, style)
+        transpileProject(projectFiles, style, literalConstants)
     } catch (e: Exception) {
         System.err.println("kt2lua: ${e.message ?: e.toString()}")
         exitProcess(1)
@@ -246,10 +271,10 @@ private fun printHelp() {
         instead of needing one written by hand. Anything that isn't any input file's own
         top-level declaration is still treated as an ambient global, same as single-file mode.
 
-        Passing a directory discovers every .kt file under it recursively and mirrors its
-        subdirectory layout in the output: src/pkg/Thing.kt becomes <outDir>/pkg/Thing.lua,
-        and sibling files require() it by that same path - so a Kotlin package's folder
-        structure carries straight through to the generated Lua instead of flattening.
+        Passing a directory discovers every .kt file under it recursively. Declared packages
+        determine output paths; files without packages retain their relative source paths.
+        --package-root plugin maps that package to the output root, and --lowercase-files
+        lowercases filenames. Sibling require() paths follow the same layout.
 
         Running a .lua file resolves require(...) to sibling .lua files relative to its
         directory. --mock-globals pre-defines the given global names as auto-stub values
@@ -271,6 +296,10 @@ private fun printHelp() {
           --mock-globals <names>   Comma-separated global names to auto-stub (.lua mode only)
           --style <file>           Use this style file instead of auto-detecting
                                    kt2lua-style.properties
+          --constants <file>       Inline generated constants/lookups from a .properties
+                                   catalog; repeat for multiple catalogs
+          --package-root <name>   Place this Kotlin package at the output root
+          --lowercase-files       Lowercase Lua filenames and matching require paths
           -h, --help               Show this help message
           -v, --version            Show the version number
 

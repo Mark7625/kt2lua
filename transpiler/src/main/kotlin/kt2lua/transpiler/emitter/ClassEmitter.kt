@@ -24,8 +24,11 @@ object ClassEmitter {
         } else {
             ctx.line("local self = setmetatable({}, ${decl.name})")
         }
+        ctx.types.pushScope()
+        ctx.types.declareInstance("self", decl.name)
         for (p in decl.params) ctx.line("self.${p.name} = ${p.name}")
         for (prop in decl.properties) ctx.line("self.${prop.name} = ${ctx.emitExpression(prop.init)}")
+        ctx.types.popScope()
         ctx.line("return self")
         ctx.popIndent()
         ctx.line("end")

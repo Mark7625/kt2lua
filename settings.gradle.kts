@@ -25,6 +25,6 @@ include("common", "transpiler", "interpreter", "gradle-plugin", "cli", "test-run
 // build.gradle.kts's own `if (file("libs/runescape").exists())` guard around the configuration
 // that applies specifically to those modules.
 if (file("libs/runescape").exists()) {
-    include("libs:runescape:core", "libs:runescape:extended", "libs:runescape:prettyui")
+    include("libs:runescape:core", "libs:runescape:extended", "libs:runescape:prettyui", "libs:runescape:ids")
     include("libs:runescape:examples:prettyui-window-kotlin")
 }

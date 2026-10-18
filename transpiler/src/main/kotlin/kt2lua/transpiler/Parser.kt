@@ -44,7 +44,8 @@ private val ASSIGN_OPS = mapOf(
  * [StatementParser]; this class keeps only what's shared — token navigation, expression
  * parsing, and grammar more than one feature needs — exposed via [ParserContext].
  */
-class Parser(private val tokens: List<Token>) : ParserContext {
+class Parser(private val tokens: List<Token>, literalConstants: Map<String, String> = emptyMap()) : ParserContext {
+    private val literalConstants = literalConstants.toMutableMap()
     private val cursor = TokenCursor(tokens, Token::type, TokenType.EOF)
     private val pos get() = cursor.pos
 
@@ -91,6 +92,12 @@ class Parser(private val tokens: List<Token>) : ParserContext {
             segments.add(expectIdentifierName())
         }
         val alias = if (match(TokenType.AS)) expectIdentifierName() else segments.last()
+        val constantPrefix = segments.joinToString(".") + "."
+        val importedConstants = literalConstants.filterKeys { it.startsWith(constantPrefix) }
+        if (importedConstants.isNotEmpty()) {
+            for ((name, value) in importedConstants) literalConstants[alias + "." + name.removePrefix(constantPrefix)] = value
+            return null
+        }
         return ImportStatement(segments.joinToString("/"), alias)
     }
 
@@ -316,6 +323,20 @@ class Parser(private val tokens: List<Token>) : ParserContext {
                 else ChainProp(name, safe)
             )
         }
+        if (!sawSafe && base is Identifier && steps.all { it is ChainProp }) {
+            val name = (listOf(base.name) + steps.map { (it as ChainProp).name }).joinToString(".")
+            literalConstants[name]?.let { value ->
+                if (value.startsWith("@lookup:")) {
+                    val lookup = value.removePrefix("@lookup:")
+                    val target = lookup.substringBefore(':')
+                    require(lookup.contains(':') && target.split('.').all { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) }) { "Invalid lookup constant binding" }
+                    val parts = target.split('.')
+                    val receiver = parts.drop(1).fold(Identifier(parts.first()) as Expression) { expr, part -> PropertyAccessExpr(expr, part) }
+                    return IndexExpr(receiver, StringTemplateLiteral(listOf(TemplateExprPart.Text(lookup.substringAfter(':')))))
+                }
+                return StringTemplateLiteral(listOf(TemplateExprPart.Text(value)))
+            }
+        }
         return if (steps.isEmpty()) base else if (sawSafe) SafeChainExpr(base, steps) else foldChain(base, steps)
     }
 
@@ -509,7 +530,7 @@ class Parser(private val tokens: List<Token>) : ParserContext {
                 is TemplatePart.Text -> TemplateExprPart.Text(part.text)
                 is TemplatePart.ExprSource -> {
                     val subTokens = Lexer(part.source).tokenize()
-                    TemplateExprPart.Expr(Parser(subTokens).parseExpression())
+                    TemplateExprPart.Expr(Parser(subTokens, literalConstants).parseExpression())
                 }
             }
         }
