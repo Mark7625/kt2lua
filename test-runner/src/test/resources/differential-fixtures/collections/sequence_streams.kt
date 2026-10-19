@@ -1,5 +1,6 @@
 import kotlin.streams.asSequence
 import kotlin.streams.asStream
+import kotlin.streams.toList
 
 fun main() {
     val stream = listOf(1, 2, 3, 4).asSequence().asStream()
@@ -7,4 +8,6 @@ fun main() {
     println(sequenceOf(5, 6, 7).asStream().asSequence().toList())
     println(listOf(1, 2, 3).asSequence().filter { it > 1 }.asStream().asSequence().sum())
     println(generateSequence(1) { it * 3 }.take(4).asStream().asSequence().toList())
+    println(listOf(1, 2, 3).asSequence().asStream().toList())
+    println(sequenceOf("a", "b").asStream().toList())
 }

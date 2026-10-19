@@ -5,6 +5,7 @@
   "documentation": "java.util.stream.Stream <-> kotlin.sequences.Sequence interop. A Stream is represented as the Sequence it came from, so the two conversions are the identity; Java Stream APIs themselves (Stream.of, collect, ...) are not modelled.",
   "declarations": [
     {"id": "kotlin.streams.Stream.asSequence()", "name": "asSequence", "kind": "extension", "receiver": "Stream<T>", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Identity: a Stream is represented as a Sequence"},
-    {"id": "kotlin.streams.Sequence.asStream()", "name": "asStream", "kind": "extension", "receiver": "Sequence<T>", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Identity: the Sequence is used as the Stream"}
+    {"id": "kotlin.streams.Sequence.asStream()", "name": "asStream", "kind": "extension", "receiver": "Sequence<T>", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Identity: the Sequence is used as the Stream"},
+    {"id": "kotlin.streams.Stream.toList()", "name": "toList", "kind": "extension", "receiver": "Stream<T>", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Collects like Sequence.toList(), since a Stream is represented as a Sequence"}
   ]
 }
