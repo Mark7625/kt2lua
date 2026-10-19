@@ -1,6 +1,7 @@
 package kt2lua.transpiler.stdlib.registry
 
 import kt2lua.transpiler.Expression
+import kt2lua.transpiler.RuntimeHelper
 import kt2lua.transpiler.Statement
 import kt2lua.transpiler.TypeName
 
@@ -33,4 +34,6 @@ interface CollectionLoweringContext {
     fun isModuleCall(expr: Expression): Boolean
 
     fun listElementClassOf(name: String): String?
+
+    fun useRuntimeHelper(helper: RuntimeHelper)
 }

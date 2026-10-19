@@ -1,0 +1,16 @@
+fun main() {
+    val xs = mutableListOf(1, 2, 3)
+    xs.add(4)
+    xs.remove(2)
+    xs.add(0, 99)
+    println(xs)
+    xs.sort()
+    println(xs)
+    xs.reverse()
+    println(xs)
+    xs.removeAll(listOf(99, 1))
+    println(xs)
+    println(xs.isEmpty())
+    xs.clear()
+    println(xs.isEmpty())
+}

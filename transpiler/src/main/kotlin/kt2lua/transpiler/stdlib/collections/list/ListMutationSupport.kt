@@ -19,10 +19,12 @@ fun CollectionLoweringContext.emitInPlaceFilterStatements(receiverStr: String, c
     declareVar(paramName, TypeName.ANY)
     line("for _, $paramName in ipairs($receiverStr) do")
     pushIndent()
+    line("local __raw = $paramName")
+    line("$paramName = __nilDecode($paramName)")
     val stmts = callback.body.body
     stmts.forEachIndexed { i, stmt ->
         if (i == stmts.lastIndex) {
-            emitLambdaResult(stmt) { v -> if (keep) "if $v then table.insert($keepVar, $paramName) end" else "if not ($v) then table.insert($keepVar, $paramName) end" }
+            emitLambdaResult(stmt) { v -> if (keep) "if $v then table.insert($keepVar, __raw) end" else "if not ($v) then table.insert($keepVar, __raw) end" }
         } else emitStatement(stmt)
     }
     popIndent()

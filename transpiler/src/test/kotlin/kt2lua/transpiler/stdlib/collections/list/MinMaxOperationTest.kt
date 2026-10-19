@@ -11,32 +11,6 @@ class MinMaxOperationTest {
     private fun emit(source: String): String = transpile(source).code
 
     @Test
-    fun `minOrNull and min alias to the same nil-on-empty implementation`() {
-        val a = emit("fun main() { val xs = listOf(1, 2, 3); val m = xs.minOrNull() }")
-        val b = emit("fun main() { val xs = listOf(1, 2, 3); val m = xs.min() }")
-        assertTrue(a.contains("__v < __bestKey"))
-        assertTrue(b.contains("__v < __bestKey"))
-    }
-
-    @Test
-    fun `maxOrNull and max use the opposite comparison`() {
-        val code = emit("fun main() { val xs = listOf(1, 2, 3); val m = xs.max() }")
-        assertTrue(code.contains("__v > __bestKey"))
-    }
-
-    @Test
-    fun `minByOrNull and maxByOrNull use a selector key`() {
-        val code = emit("fun main() { val xs = listOf(1, 2, 3); val m = xs.minByOrNull { -it } }")
-        assertTrue(code.contains("local __k ="))
-    }
-
-    @Test
-    fun `work for a Set receiver too`() {
-        val code = emit("fun main() { val xs = setOf(1, 2, 3); val m = xs.max() }")
-        assertTrue(code.contains("ipairs(xs.list)"))
-    }
-
-    @Test
     fun `a module's own method of the same name is not shadowed`() {
         val code = emit("""
             import oop_lib

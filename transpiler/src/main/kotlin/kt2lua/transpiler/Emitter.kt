@@ -172,6 +172,9 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     override fun nextTemp(prefix: String): String = "$prefix${++receiverCounter}"
     override fun listElementClassOf(name: String): String? = types.listElementClassOf(name)
     override fun isNativeClass(className: String): Boolean = types.classInfo(className)?.native != false
+    override fun useRuntimeHelper(helper: RuntimeHelper) {
+        usedRuntimeHelpers += helper
+    }
     private val indentUnit = style.indentUnit
     private var out = StringBuilder()
     private var indentLevel = 0
@@ -420,10 +423,11 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         }
         if (expr.args.isEmpty() && expr.methodName in setOf("first", "last", "firstOrNull", "lastOrNull") && collClass != "Map" && collClass != "Sequence" && !isModuleCall(expr.obj)) {
             val receiverStr = iterationArrayOf(expr.obj)
+            useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
             return if (expr.methodName == "last" || expr.methodName == "lastOrNull") {
-                "(type($receiverStr) == \"string\" and string.sub($receiverStr, -1, -1) or $receiverStr[#$receiverStr])"
+                "(type($receiverStr) == \"string\" and string.sub($receiverStr, -1, -1) or __nilDecode($receiverStr[#$receiverStr]))"
             } else {
-                "(type($receiverStr) == \"string\" and string.sub($receiverStr, 1, 1) or $receiverStr[1])"
+                "(type($receiverStr) == \"string\" and string.sub($receiverStr, 1, 1) or __nilDecode($receiverStr[1]))"
             }
         }
         if (expr.methodName == "joinToString" && collClass != "Map" && collClass != "Sequence" && !isModuleCall(expr.obj)) {
@@ -505,9 +509,13 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         }
         if (collClass == "List") {
             val receiverStr = emitExpression(expr.obj)
-            if (expr.methodName == "get" && expr.args.size == 1) return "$receiverStr[(${emitExpression(expr.args[0].toExpression())}) + 1]"
+            if (expr.methodName == "get" && expr.args.size == 1) {
+                useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
+                return "__nilDecode($receiverStr[(${emitExpression(expr.args[0].toExpression())}) + 1])"
+            }
             if (expr.methodName == "removeAt" && expr.args.size == 1) {
-                return "table.remove($receiverStr, (${emitExpression(expr.args[0].toExpression())}) + 1)"
+                useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
+                return "__nilDecode(table.remove($receiverStr, (${emitExpression(expr.args[0].toExpression())}) + 1))"
             }
             if (expr.methodName == "isEmpty" && expr.args.isEmpty()) return "(#$receiverStr == 0)"
             if (expr.methodName == "isNotEmpty" && expr.args.isEmpty()) return "(#$receiverStr ~= 0)"
@@ -775,6 +783,11 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             emitMapPut(emitExpression(target.obj), emitExpression(target.index), emitExpression(stmt.expr), target.index)
             return
         }
+        if (stmt.op == "=" && target is IndexTarget && receiverInstanceClass(target.obj) == "List") {
+            useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
+            line("${emitAssignTarget(target)} = __nilEncode(${emitExpression(stmt.expr)})")
+            return
+        }
         val rhs = stmt.expr
         if (stmt.op == "=" && stmt.target is NameTarget && rhs is MethodCallExpr &&
             rhs.methodName in inlineAccumulateMethodNames && !receiverOverridesMethod(rhs.obj, rhs.methodName) &&
@@ -801,6 +814,9 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         if (binOp == "/" && targetType == TypeName.INT && types.inferExprType(stmt.expr) == TypeName.INT) {
             usedRuntimeHelpers += RuntimeHelper.INT_DIV
             line("$targetStr = __intdiv($targetStr, $rhsStr)")
+        } else if (binOp == "%") {
+            usedRuntimeHelpers += RuntimeHelper.MOD
+            line("$targetStr = __mod($targetStr, $rhsStr)")
         } else {
             line("$targetStr = $targetStr $binOp ($rhsStr)")
         }
@@ -886,6 +902,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         return when {
             receiverInstanceClass(expr.obj) == "Map" -> "$receiverStr.map[${canonicalKeyStr(expr.index, indexStr)}]"
             types.inferExprType(expr.index) == TypeName.STRING -> "$receiverStr[$indexStr]"
+            receiverInstanceClass(expr.obj) == "List" -> {
+                useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
+                "__nilDecode($receiverStr[($indexStr) + 1])"
+            }
             else -> "$receiverStr[($indexStr) + 1]"
         }
     }
@@ -998,6 +1018,12 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         "Set" -> "($collStr.has[${valueExpr?.let { canonicalKeyStr(it, valueStr) } ?: valueStr}] ~= nil)"
         "Map" -> "($collStr.map[${valueExpr?.let { canonicalKeyStr(it, valueStr) } ?: valueStr}] ~= nil)"
         "String" -> "(string.find($collStr, $valueStr, 1, true) ~= nil)"
+        "List" -> {
+            useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
+            val encodedValue = "__nilEncode($valueStr)"
+            val eq = valueExpr?.let { structuralEq(it, "__v", encodedValue) } ?: "(__v == $encodedValue)"
+            "(function() for _, __v in ipairs($collStr) do if $eq then return true end end return false end)()"
+        }
         else -> {
             val eq = valueExpr?.let { structuralEq(it, "__v", valueStr) } ?: "(__v == $valueStr)"
             "(function() for _, __v in ipairs($collStr) do if $eq then return true end end return false end)()"
@@ -1483,21 +1509,29 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         return sb.toString()
     }
 
+    // A data class with no hand-written toString() gets an auto-generated __tostring listing
+    // every constructor property, so comparing tostring(a) == tostring(b) is a valid stand-in for
+    // field-by-field equality (mirrors the same tostring-as-structural-key trick StructuralKeying
+    // already uses for map keys/collection search). A hand-written toString() might not mention
+    // every property, so it's excluded - only the auto-generated one is guaranteed complete.
+    private fun isAutoDataClass(expr: Expression): Boolean =
+        receiverInstanceClass(expr)?.let { cls -> types.classInfo(cls)?.let { it.isData && !it.hasToString } } == true
+
     private fun emitBinary(expr: BinaryExpr): String {
         val leftStr = emitExpression(expr.left)
         val rightStr = emitExpression(expr.right)
         return when (expr.op) {
             "&&" -> "($leftStr and $rightStr)"
             "||" -> "($leftStr or $rightStr)"
-            "==" -> if (receiverInstanceClass(expr.left) in setOf("List", "Set", "Map")) {
-                emitCollectionEquals(expr.left, leftStr, rightStr)
-            } else {
-                "($leftStr == $rightStr)"
+            "==" -> when {
+                receiverInstanceClass(expr.left) in setOf("List", "Set", "Map") -> emitCollectionEquals(expr.left, leftStr, rightStr)
+                isAutoDataClass(expr.left) -> "(tostring($leftStr) == tostring($rightStr))"
+                else -> "($leftStr == $rightStr)"
             }
-            "!=" -> if (receiverInstanceClass(expr.left) in setOf("List", "Set", "Map")) {
-                "(not ${emitCollectionEquals(expr.left, leftStr, rightStr)})"
-            } else {
-                "($leftStr ~= $rightStr)"
+            "!=" -> when {
+                receiverInstanceClass(expr.left) in setOf("List", "Set", "Map") -> "(not ${emitCollectionEquals(expr.left, leftStr, rightStr)})"
+                isAutoDataClass(expr.left) -> "(tostring($leftStr) ~= tostring($rightStr))"
+                else -> "($leftStr ~= $rightStr)"
             }
             "in" -> emitContains(expr.right, rightStr, leftStr, expr.left)
             "!in" -> "(not ${emitContains(expr.right, rightStr, leftStr, expr.left)})"
@@ -1520,6 +1554,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                 } else {
                     "($leftStr / $rightStr)"
                 }
+            }
+            "%" -> {
+                usedRuntimeHelpers += RuntimeHelper.MOD
+                "__mod($leftStr, $rightStr)"
             }
             else -> "($leftStr ${expr.op} $rightStr)"
         }
@@ -1547,7 +1585,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         }
         operationRegistry.resolveTopLevel(expr.callee, OperationCall(null, expr.args), this)?.let { op ->
             return if (op.resultKind(null) == "List" && expr.args.none { it is SpreadArg }) {
-                "{${expr.args.joinToString(", ") { emitExpression(it.toExpression()) }}}"
+                if (expr.args.isNotEmpty()) useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
+                "{${expr.args.joinToString(", ") { "__nilEncode(${emitExpression(it.toExpression())})" }}}"
             } else {
                 val resultVar = nextTemp("__coll")
                 emitCollectionIIFE(resultVar) { op.lower(OperationCall(null, expr.args), resultVar, this) }!!
@@ -1652,7 +1691,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private fun emitCollectionToStringExpr(className: String, receiverStr: String): String = when (className) {
         "Set" -> "(\"[\" .. table.concat((function() local __p = {} for _, __v in ipairs($receiverStr.list) do table.insert(__p, tostring(__v)) end return __p end)(), \", \") .. \"]\")"
         "Map" -> "(\"{\" .. table.concat((function() local __r = $receiverStr local __p = {} for _, __k in ipairs(__r.keys) do table.insert(__p, tostring(__k) .. \"=\" .. tostring(__r.map[__k])) end return __p end)(), \", \") .. \"}\")"
-        else -> "(\"[\" .. table.concat((function() local __p = {} for _, __v in ipairs($receiverStr) do table.insert(__p, tostring(__v)) end return __p end)(), \", \") .. \"]\")"
+        else -> {
+            useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
+            "(\"[\" .. table.concat((function() local __p = {} for _, __v in ipairs($receiverStr) do table.insert(__p, tostring(__nilDecode(__v))) end return __p end)(), \", \") .. \"]\")"
+        }
     }
 
     private fun formatForToString(expr: Expression, exprStr: String): String {

@@ -1,6 +1,7 @@
 package kt2lua.transpiler.compatibility
 
 import kt2lua.transpiler.Expression
+import kt2lua.transpiler.RuntimeHelper
 import kt2lua.transpiler.Statement
 import kt2lua.transpiler.TypeName
 import kt2lua.transpiler.stdlib.registry.CollectionLoweringContext
@@ -30,6 +31,7 @@ private object UnusedContext : CollectionLoweringContext {
     override fun nextTemp(prefix: String) = error("not used")
     override fun listElementClassOf(name: String) = error("not used")
     override fun isModuleCall(expr: Expression) = error("not used")
+    override fun useRuntimeHelper(helper: RuntimeHelper) = error("not used")
 }
 
 private class StubOperation(override val id: DeclarationId) : StdlibOperation {

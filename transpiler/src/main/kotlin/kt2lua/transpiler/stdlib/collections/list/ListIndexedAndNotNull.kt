@@ -2,10 +2,12 @@ package kt2lua.transpiler.stdlib.collections.list
 
 import kt2lua.transpiler.Expression
 import kt2lua.transpiler.LambdaExpr
+import kt2lua.transpiler.RuntimeHelper
 import kt2lua.transpiler.TypeName
 import kt2lua.transpiler.stdlib.registry.CollectionLoweringContext
 
 fun CollectionLoweringContext.emitMapIndexedStatements(resultVar: String, receiverStr: String, callback: LambdaExpr) {
+    useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
     line("local $resultVar = {}")
     val idxParam = callback.params.getOrElse(0) { "index" }
     val elemParam = callback.params.getOrElse(1) { "it" }
@@ -15,9 +17,10 @@ fun CollectionLoweringContext.emitMapIndexedStatements(resultVar: String, receiv
     line("for __i, $elemParam in ipairs($receiverStr) do")
     pushIndent()
     line("local $idxParam = __i - 1")
+    line("$elemParam = __nilDecode($elemParam)")
     val stmts = callback.body.body
     stmts.forEachIndexed { i, stmt ->
-        if (i == stmts.lastIndex) emitLambdaResult(stmt) { "$resultVar[__i] = $it" } else emitStatement(stmt)
+        if (i == stmts.lastIndex) emitLambdaResult(stmt) { "$resultVar[__i] = __nilEncode($it)" } else emitStatement(stmt)
     }
     popIndent()
     line("end")
@@ -25,6 +28,7 @@ fun CollectionLoweringContext.emitMapIndexedStatements(resultVar: String, receiv
 }
 
 fun CollectionLoweringContext.emitForEachIndexedStatement(receiverStr: String, callback: LambdaExpr) {
+    useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
     val idxParam = callback.params.getOrElse(0) { "index" }
     val elemParam = callback.params.getOrElse(1) { "it" }
     pushScope()
@@ -33,6 +37,7 @@ fun CollectionLoweringContext.emitForEachIndexedStatement(receiverStr: String, c
     line("for __i, $elemParam in ipairs($receiverStr) do")
     pushIndent()
     line("local $idxParam = __i - 1")
+    line("$elemParam = __nilDecode($elemParam)")
     callback.body.body.forEach { emitStatement(it) }
     popIndent()
     line("end")
@@ -40,6 +45,7 @@ fun CollectionLoweringContext.emitForEachIndexedStatement(receiverStr: String, c
 }
 
 fun CollectionLoweringContext.emitFilterIndexedStatements(resultVar: String, receiverStr: String, callback: LambdaExpr) {
+    useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
     line("local $resultVar = {}")
     val idxParam = callback.params.getOrElse(0) { "index" }
     val elemParam = callback.params.getOrElse(1) { "it" }
@@ -49,9 +55,11 @@ fun CollectionLoweringContext.emitFilterIndexedStatements(resultVar: String, rec
     line("for __i, $elemParam in ipairs($receiverStr) do")
     pushIndent()
     line("local $idxParam = __i - 1")
+    line("local __raw = $elemParam")
+    line("$elemParam = __nilDecode($elemParam)")
     val stmts = callback.body.body
     stmts.forEachIndexed { i, stmt ->
-        if (i == stmts.lastIndex) emitLambdaResult(stmt) { "if $it then table.insert($resultVar, $elemParam) end" } else emitStatement(stmt)
+        if (i == stmts.lastIndex) emitLambdaResult(stmt) { "if $it then table.insert($resultVar, __raw) end" } else emitStatement(stmt)
     }
     popIndent()
     line("end")
@@ -59,6 +67,7 @@ fun CollectionLoweringContext.emitFilterIndexedStatements(resultVar: String, rec
 }
 
 fun CollectionLoweringContext.emitMapNotNullStatements(resultVar: String, receiverStr: String, callback: Expression) {
+    useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
     line("local $resultVar = {}")
     if (callback is LambdaExpr) {
         val paramName = callback.params.firstOrNull() ?: "it"
@@ -66,6 +75,7 @@ fun CollectionLoweringContext.emitMapNotNullStatements(resultVar: String, receiv
         declareVar(paramName, TypeName.ANY)
         line("for _, $paramName in ipairs($receiverStr) do")
         pushIndent()
+        line("$paramName = __nilDecode($paramName)")
         val stmts = callback.body.body
         stmts.forEachIndexed { i, stmt ->
             if (i == stmts.lastIndex) emitLambdaResult(stmt) { "local __r = $it; if __r ~= nil then table.insert($resultVar, __r) end" } else emitStatement(stmt)
@@ -78,13 +88,14 @@ fun CollectionLoweringContext.emitMapNotNullStatements(resultVar: String, receiv
         line("local $fnVar = ${emitExpression(callback)}")
         line("for _, __v in ipairs($receiverStr) do")
         pushIndent()
-        line("local __r = $fnVar(__v); if __r ~= nil then table.insert($resultVar, __r) end")
+        line("local __r = $fnVar(__nilDecode(__v)); if __r ~= nil then table.insert($resultVar, __r) end")
         popIndent()
         line("end")
     }
 }
 
 fun CollectionLoweringContext.emitFilterNotNullStatements(resultVar: String, receiverStr: String) {
+    useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
     line("local $resultVar = {}")
-    line("for _, __v in ipairs($receiverStr) do if __v ~= nil then table.insert($resultVar, __v) end end")
+    line("for _, __v in ipairs($receiverStr) do if __v ~= __NULL then table.insert($resultVar, __v) end end")
 }

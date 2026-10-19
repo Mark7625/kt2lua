@@ -17,10 +17,12 @@ fun CollectionLoweringContext.emitPartitionStatements(resultVar: String, receive
         declareVar(paramName, TypeName.ANY)
         line("for _, $paramName in ipairs($receiverStr) do")
         pushIndent()
+        line("local __raw = $paramName")
+        line("$paramName = __nilDecode($paramName)")
         val stmts = callback.body.body
         stmts.forEachIndexed { i, stmt ->
             if (i == stmts.lastIndex) {
-                emitLambdaResult(stmt) { "if $it then table.insert($matchVar, $paramName) else table.insert($restVar, $paramName) end" }
+                emitLambdaResult(stmt) { "if $it then table.insert($matchVar, __raw) else table.insert($restVar, __raw) end" }
             } else emitStatement(stmt)
         }
         popIndent()
@@ -31,7 +33,7 @@ fun CollectionLoweringContext.emitPartitionStatements(resultVar: String, receive
         line("local $fnVar = ${emitExpression(callback)}")
         line("for _, __v in ipairs($receiverStr) do")
         pushIndent()
-        line("if $fnVar(__v) then table.insert($matchVar, __v) else table.insert($restVar, __v) end")
+        line("if $fnVar(__nilDecode(__v)) then table.insert($matchVar, __v) else table.insert($restVar, __v) end")
         popIndent()
         line("end")
     }

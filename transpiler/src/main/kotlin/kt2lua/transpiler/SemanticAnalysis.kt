@@ -57,6 +57,7 @@ data class ClassInfo(
     val propertyTypes: Map<String, String> = emptyMap(),
     val native: Boolean = false,
     val superClass: String? = null,
+    val isData: Boolean = false,
 )
 
 /** Every Kotlin spelling of a stdlib collection type collapses to one of these three
@@ -202,6 +203,7 @@ class TypeAnalyzer {
                             stmt.params.associate { it.name to "" } +
                             stmt.properties.associate { it.name to it.rawType.ifEmpty { collectionConstructorKind(it.init) } },
                         superClass = stmt.superClass,
+                        isData = stmt.isData,
                     )
                 }
                 else -> {}

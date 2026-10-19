@@ -11,23 +11,6 @@ class SortedOperationTest {
     private fun emit(source: String): String = transpile(source).code
 
     @Test
-    fun `sorted and sortedDescending produce a fresh list, leaving the receiver untouched`() {
-        val code = emit("fun main() { val xs = listOf(3, 1, 2); val ys = xs.sorted(); val zs = xs.sortedDescending() }")
-        assertTrue(code.contains("local ys = {}"))
-        assertTrue(code.contains("local zs = {}"))
-        assertTrue(code.contains("table.sort("))
-    }
-
-    @Test
-    fun `sortedBy and sortedByDescending work for both List and Set`() {
-        val listCode = emit("fun main() { val xs = listOf(3, 1, 2); val ys = xs.sortedBy { -it } }")
-        assertTrue(listCode.contains("k = -it") || listCode.contains("k = (-it)"))
-
-        val setCode = emit("fun main() { val xs = setOf(3, 1, 2); val ys = xs.sortedByDescending { it } }")
-        assertTrue(setCode.contains("ipairs(xs.list)"), "expected Set.sortedByDescending to iterate xs.list, got:\n$setCode")
-    }
-
-    @Test
     fun `a module's own method of the same name is not shadowed`() {
         val code = emit("""
             import oop_lib

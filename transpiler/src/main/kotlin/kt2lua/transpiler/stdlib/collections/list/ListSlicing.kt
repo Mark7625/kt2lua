@@ -33,9 +33,11 @@ fun CollectionLoweringContext.emitTakeWhileStatements(resultVar: String, receive
         declareVar(paramName, TypeName.ANY)
         line("for _, $paramName in ipairs($receiverStr) do")
         pushIndent()
+        line("local __raw = $paramName")
+        line("$paramName = __nilDecode($paramName)")
         val stmts = callback.body.body
         stmts.forEachIndexed { i, stmt ->
-            if (i == stmts.lastIndex) emitLambdaResult(stmt) { "if not ($it) then break end; table.insert($resultVar, $paramName)" } else emitStatement(stmt)
+            if (i == stmts.lastIndex) emitLambdaResult(stmt) { "if not ($it) then break end; table.insert($resultVar, __raw)" } else emitStatement(stmt)
         }
         popIndent()
         line("end")
@@ -45,7 +47,7 @@ fun CollectionLoweringContext.emitTakeWhileStatements(resultVar: String, receive
         line("local $fnVar = ${emitExpression(callback)}")
         line("for _, __v in ipairs($receiverStr) do")
         pushIndent()
-        line("if not $fnVar(__v) then break end")
+        line("if not $fnVar(__nilDecode(__v)) then break end")
         line("table.insert($resultVar, __v)")
         popIndent()
         line("end")
@@ -62,11 +64,13 @@ fun CollectionLoweringContext.emitDropWhileStatements(resultVar: String, receive
         declareVar(paramName, TypeName.ANY)
         line("for _, $paramName in ipairs($receiverStr) do")
         pushIndent()
+        line("local __raw = $paramName")
+        line("$paramName = __nilDecode($paramName)")
         val stmts = callback.body.body
         stmts.forEachIndexed { i, stmt ->
             if (i == stmts.lastIndex) {
                 emitLambdaResult(stmt) {
-                    "if $droppingVar then if not ($it) then $droppingVar = false end end; if not $droppingVar then table.insert($resultVar, $paramName) end"
+                    "if $droppingVar then if not ($it) then $droppingVar = false end end; if not $droppingVar then table.insert($resultVar, __raw) end"
                 }
             } else emitStatement(stmt)
         }
@@ -78,7 +82,7 @@ fun CollectionLoweringContext.emitDropWhileStatements(resultVar: String, receive
         line("local $fnVar = ${emitExpression(callback)}")
         line("for _, __v in ipairs($receiverStr) do")
         pushIndent()
-        line("if $droppingVar then if not $fnVar(__v) then $droppingVar = false end end")
+        line("if $droppingVar then if not $fnVar(__nilDecode(__v)) then $droppingVar = false end end")
         line("if not $droppingVar then table.insert($resultVar, __v) end")
         popIndent()
         line("end")

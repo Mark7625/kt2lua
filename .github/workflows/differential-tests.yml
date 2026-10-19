@@ -1,0 +1,54 @@
+name: differential-tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  differential:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Run the differential test suite
+        run: ./gradlew :test-runner:differentialTest --no-daemon
+
+      - name: Job summary
+        if: always()
+        run: |
+          xml="test-runner/build/test-results/differentialTest/TEST-kt2lua.testrunner.differential.DifferentialSuiteTest.xml"
+          if [ ! -f "$xml" ]; then
+            echo "## KT2LUA Differential Tests" >> "$GITHUB_STEP_SUMMARY"
+            echo "No test results found (the run likely failed before any fixture executed)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          tests=$(grep -o 'tests="[0-9]*"' "$xml" | head -1 | grep -o '[0-9]*')
+          failures=$(grep -o 'failures="[0-9]*"' "$xml" | head -1 | grep -o '[0-9]*')
+          time=$(grep -o 'time="[0-9.]*"' "$xml" | head -1 | grep -o '[0-9.]*')
+          echo "## KT2LUA Differential Tests" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Every fixture compiled and run for real on the JVM, transpiled and run through kt2lua's own Lua interpreter, and compared." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Fixtures | Failed | Duration |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| $tests | $failures | ${time}s |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Selection mode: full suite (no affected-test selection yet — see test-runner/README.md)." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$failures" != "0" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Failures include anything NOT under \`differential-fixtures/regression/\` — those are confirmed, tracked bugs that are expected to fail." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: differential-test-reports
+          path: test-runner/build/reports/tests/differentialTest/

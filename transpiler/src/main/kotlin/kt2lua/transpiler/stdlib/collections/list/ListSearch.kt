@@ -2,11 +2,13 @@ package kt2lua.transpiler.stdlib.collections.list
 
 import kt2lua.transpiler.Expression
 import kt2lua.transpiler.LambdaExpr
+import kt2lua.transpiler.RuntimeHelper
 import kt2lua.transpiler.TypeName
 import kt2lua.transpiler.stdlib.collections.common.structuralEq
 import kt2lua.transpiler.stdlib.registry.CollectionLoweringContext
 
 fun CollectionLoweringContext.emitFindStatements(resultVar: String, receiverStr: String, callback: Expression, fromEnd: Boolean) {
+    useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
     line("local $resultVar = nil")
     val rangeStr = if (fromEnd) "#$receiverStr, 1, -1" else "1, #$receiverStr"
     if (callback is LambdaExpr) {
@@ -15,7 +17,7 @@ fun CollectionLoweringContext.emitFindStatements(resultVar: String, receiverStr:
         declareVar(paramName, TypeName.ANY)
         line("for __i = $rangeStr do")
         pushIndent()
-        line("local $paramName = $receiverStr[__i]")
+        line("local $paramName = __nilDecode($receiverStr[__i])")
         val stmts = callback.body.body
         stmts.forEachIndexed { i, stmt ->
             if (i == stmts.lastIndex) emitLambdaResult(stmt) { "if $it then $resultVar = $paramName; break end" } else emitStatement(stmt)
@@ -28,7 +30,7 @@ fun CollectionLoweringContext.emitFindStatements(resultVar: String, receiverStr:
         line("local $fnVar = ${emitExpression(callback)}")
         line("for __i = $rangeStr do")
         pushIndent()
-        line("local __v = $receiverStr[__i]")
+        line("local __v = __nilDecode($receiverStr[__i])")
         line("if $fnVar(__v) then $resultVar = __v; break end")
         popIndent()
         line("end")
@@ -36,12 +38,15 @@ fun CollectionLoweringContext.emitFindStatements(resultVar: String, receiverStr:
 }
 
 fun CollectionLoweringContext.emitIndexOfStatements(resultVar: String, receiverStr: String, targetStr: String, targetExpr: Expression? = null) {
+    useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
     line("local $resultVar = -1")
-    val eq = targetExpr?.let { structuralEq(it, "__v", targetStr) } ?: "(__v == $targetStr)"
+    val encodedTarget = "__nilEncode($targetStr)"
+    val eq = targetExpr?.let { structuralEq(it, "__v", encodedTarget) } ?: "(__v == $encodedTarget)"
     line("for __i, __v in ipairs($receiverStr) do if $eq then $resultVar = __i - 1; break end end")
 }
 
 fun CollectionLoweringContext.emitIndexOfPredicateStatements(resultVar: String, receiverStr: String, callback: Expression, fromEnd: Boolean) {
+    useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
     line("local $resultVar = -1")
     val rangeStr = if (fromEnd) "#$receiverStr, 1, -1" else "1, #$receiverStr"
     if (callback is LambdaExpr) {
@@ -50,7 +55,7 @@ fun CollectionLoweringContext.emitIndexOfPredicateStatements(resultVar: String, 
         declareVar(paramName, TypeName.ANY)
         line("for __i = $rangeStr do")
         pushIndent()
-        line("local $paramName = $receiverStr[__i]")
+        line("local $paramName = __nilDecode($receiverStr[__i])")
         val stmts = callback.body.body
         stmts.forEachIndexed { i, stmt ->
             if (i == stmts.lastIndex) emitLambdaResult(stmt) { "if $it then $resultVar = __i - 1; break end" } else emitStatement(stmt)
@@ -63,7 +68,7 @@ fun CollectionLoweringContext.emitIndexOfPredicateStatements(resultVar: String, 
         line("local $fnVar = ${emitExpression(callback)}")
         line("for __i = $rangeStr do")
         pushIndent()
-        line("local __v = $receiverStr[__i]")
+        line("local __v = __nilDecode($receiverStr[__i])")
         line("if $fnVar(__v) then $resultVar = __i - 1; break end")
         popIndent()
         line("end")

@@ -76,7 +76,7 @@ class EmitterTest {
     @Test
     fun `named-argument call to a lowercase function becomes one table argument`() {
         val code = emit("""fun main() { definePlugin(modules = listOf(1), init = 2) }""")
-        assertTrue(code.contains("definePlugin({modules = {1}, init = 2})"))
+        assertTrue(code.contains("definePlugin({modules = {__nilEncode(1)}, init = 2})"))
     }
 
     @Test
@@ -89,7 +89,7 @@ class EmitterTest {
     @Test
     fun `listOf compiles to a Lua table literal`() {
         val code = emit("fun main() { val xs = listOf(1, 2, 3) }")
-        assertTrue(code.contains("local xs = {1, 2, 3}"))
+        assertTrue(code.contains("local xs = {__nilEncode(1), __nilEncode(2), __nilEncode(3)}"))
     }
 
     @Test
@@ -101,7 +101,7 @@ class EmitterTest {
     @Test
     fun `collection for-in compiles to ipairs`() {
         val code = emit("fun main() { for (x in listOf(1, 2)) { println(x) } }")
-        assertTrue(code.contains("for _, x in ipairs({1, 2}) do"))
+        assertTrue(code.contains("for _, x in ipairs({__nilEncode(1), __nilEncode(2)}) do"))
     }
 
     @Test
@@ -243,7 +243,7 @@ class EmitterTest {
     @Test
     fun `reduce inlines to a loop seeded from the first element`() {
         val code = emit("fun main() { val n = xs.reduce { acc, x -> acc * x } }")
-        assertTrue(code.contains("local acc = xs[1]"))
+        assertTrue(code.contains("local acc = __nilDecode(xs[1])"))
         assertTrue(code.contains("for __i = 2, #xs do"))
         assertTrue(code.contains("acc = (acc * x)"))
         assertTrue(code.contains("local n = acc"))
@@ -450,7 +450,7 @@ class EmitterTest {
     fun `map and filter inline to their own loop shape, not a shared helper`() {
         val mapOnly = emit("fun main() { xs.map { it * 2 } }")
         assertTrue(mapOnly.contains("for __i, it in ipairs(xs) do"))
-        assertTrue(mapOnly.contains("= (it * 2)"))
+        assertTrue(mapOnly.contains("= __nilEncode((it * 2))"))
         assertTrue(!mapOnly.contains("__map") && !mapOnly.contains("__filter") && !mapOnly.contains("__forEach"))
 
         val filterOnly = emit("fun main() { xs.filter { it > 0 } }")

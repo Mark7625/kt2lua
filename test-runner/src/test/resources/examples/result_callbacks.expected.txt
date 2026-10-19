@@ -1,9 +1,0 @@
-false
-true
-false
-true
-empty
-caught boom
-true
-fallback
-true

@@ -29,4 +29,6 @@ interface EmitContext {
      * a non-private function becomes `$moduleVar.<name>`, a variable both stays local and gets
      * mirrored onto `$moduleVar.<name>`, anything else emits normally. */
     fun emitModuleMember(stmt: Statement, moduleVar: String)
+
+    fun useRuntimeHelper(helper: RuntimeHelper)
 }

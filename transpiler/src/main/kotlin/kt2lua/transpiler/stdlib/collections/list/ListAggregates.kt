@@ -2,6 +2,7 @@ package kt2lua.transpiler.stdlib.collections.list
 
 import kt2lua.transpiler.Expression
 import kt2lua.transpiler.LambdaExpr
+import kt2lua.transpiler.RuntimeHelper
 import kt2lua.transpiler.TypeName
 import kt2lua.transpiler.stdlib.registry.CollectionLoweringContext
 
@@ -19,6 +20,7 @@ fun CollectionLoweringContext.emitAnyAllNoneStatements(resultVar: String, receiv
         declareVar(paramName, TypeName.ANY)
         line("for _, $paramName in ipairs($receiverStr) do")
         pushIndent()
+        line("$paramName = __nilDecode($paramName)")
         val stmts = callback.body.body
         stmts.forEachIndexed { i, stmt -> if (i == stmts.lastIndex) emitLambdaResult(stmt, sink) else emitStatement(stmt) }
         popIndent()
@@ -29,10 +31,11 @@ fun CollectionLoweringContext.emitAnyAllNoneStatements(resultVar: String, receiv
         line("local $fnVar = ${emitExpression(callback)}")
         line("for _, __v in ipairs($receiverStr) do")
         pushIndent()
-        line(sink("$fnVar(__v)"))
+        line(sink("$fnVar(__nilDecode(__v))"))
         popIndent()
         line("end")
     }
+    useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
 }
 
 fun CollectionLoweringContext.emitCountStatements(resultVar: String, receiverStr: String, callback: Expression?) {
@@ -47,6 +50,7 @@ fun CollectionLoweringContext.emitCountStatements(resultVar: String, receiverStr
         declareVar(paramName, TypeName.ANY)
         line("for _, $paramName in ipairs($receiverStr) do")
         pushIndent()
+        line("$paramName = __nilDecode($paramName)")
         val stmts = callback.body.body
         stmts.forEachIndexed { i, stmt ->
             if (i == stmts.lastIndex) emitLambdaResult(stmt) { "if $it then $resultVar = $resultVar + 1 end" } else emitStatement(stmt)
@@ -59,10 +63,11 @@ fun CollectionLoweringContext.emitCountStatements(resultVar: String, receiverStr
         line("local $fnVar = ${emitExpression(callback)}")
         line("for _, __v in ipairs($receiverStr) do")
         pushIndent()
-        line("if $fnVar(__v) then $resultVar = $resultVar + 1 end")
+        line("if $fnVar(__nilDecode(__v)) then $resultVar = $resultVar + 1 end")
         popIndent()
         line("end")
     }
+    useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
 }
 
 fun CollectionLoweringContext.emitSumStatements(resultVar: String, receiverStr: String, selector: Expression?) {
@@ -75,6 +80,7 @@ fun CollectionLoweringContext.emitSumStatements(resultVar: String, receiverStr: 
             declareVar(paramName, TypeName.ANY)
             line("for _, $paramName in ipairs($receiverStr) do")
             pushIndent()
+            line("$paramName = __nilDecode($paramName)")
             val stmts = selector.body.body
             stmts.forEachIndexed { i, stmt ->
                 if (i == stmts.lastIndex) emitLambdaResult(stmt) { "$resultVar = $resultVar + ($it)" } else emitStatement(stmt)
@@ -82,11 +88,13 @@ fun CollectionLoweringContext.emitSumStatements(resultVar: String, receiverStr: 
             popIndent()
             line("end")
             popScope()
+            useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
         }
         else -> {
             val fnVar = nextTemp("__fn")
             line("local $fnVar = ${emitExpression(selector)}")
-            line("for _, __v in ipairs($receiverStr) do $resultVar = $resultVar + $fnVar(__v) end")
+            line("for _, __v in ipairs($receiverStr) do $resultVar = $resultVar + $fnVar(__nilDecode(__v)) end")
+            useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
         }
     }
 }

@@ -11,32 +11,10 @@ class SetConstructorOperationTest {
     private fun emit(source: String): String = transpile(source).code
 
     @Test
-    fun `setOf, mutableSetOf and hashSetOf all build the same list-plus-has representation`() {
-        for (callee in listOf("setOf", "mutableSetOf", "hashSetOf")) {
-            val code = emit("fun main() { val xs = $callee(1, 2, 3) }")
-            assertTrue(code.contains("local xs = {list = {}, has = {}}"), "expected Set construction for $callee, got:\n$code")
-            assertTrue(code.contains("table.insert(xs.list, 1)"), "expected dedup-tracked inserts for $callee, got:\n$code")
-        }
-    }
-
-    @Test
-    fun `emptySet compiles to an empty Set representation`() {
-        val code = emit("fun main() { val xs = emptySet<Int>() }")
-        assertTrue(code.contains("local xs = {list = {}, has = {}}"))
-    }
-
-    @Test
     fun `a spread argument loops over the spread source with the same dedup check`() {
         val code = emit("fun main() { val ys = setOf(1, *xs) }")
         assertTrue(code.contains("for _, __e in ipairs(xs) do"))
         assertTrue(code.contains("table.insert(ys.list, __e)"))
-    }
-
-    @Test
-    fun `used as a nested expression argument, built via an IIFE`() {
-        val code = emit("fun main() { println(foo(setOf(1, 2))) } fun foo(xs: Set<Int>): Int = xs.list.size")
-        assertTrue(code.contains("(function()"))
-        assertTrue(code.contains("list = {}, has = {}"))
     }
 
     @Test

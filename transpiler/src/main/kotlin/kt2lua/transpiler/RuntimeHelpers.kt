@@ -28,9 +28,34 @@ private val TAKE_IF_SOURCE = """
 
 """.trimIndent() + "\n"
 
+// Kotlin's % truncates toward zero (result has the dividend's sign); Lua's % floors (result has
+// the divisor's sign). They only disagree when the remainder is nonzero and the signs of a and
+// the floor-based remainder differ, in which case subtracting b converts floor-mod to trunc-mod.
+private const val MOD_SOURCE = """local function __mod(a, b)
+  local r = a % b
+  if r ~= 0 and (r < 0) ~= (a < 0) then
+    r = r - b
+  end
+  return r
+end
+
+"""
+
+// Lua's ipairs()/# treat a raw `nil` as "end of array", so a List<T?> containing Kotlin nulls
+// can't be backed by a plain Lua array with real nil elements - `{1, nil, 3}` silently looks like
+// a 1-element array to ipairs(). __NULL is a sentinel stored in place of nil; __nilEncode wraps a
+// value going into list storage, __nilDecode unwraps one coming back out.
+private const val NULL_SENTINEL_SOURCE = """local __NULL = {}
+local function __nilEncode(v) if v == nil then return __NULL else return v end end
+local function __nilDecode(v) if v == __NULL then return nil else return v end end
+
+"""
+
 enum class RuntimeHelper(val source: String) {
     RESULT(RESULT_RUNTIME),
     RECORD_COPY(RECORD_COPY_SOURCE),
     TAKE_IF(TAKE_IF_SOURCE),
     INT_DIV(INT_DIV_SOURCE),
+    MOD(MOD_SOURCE),
+    NULL_SENTINEL(NULL_SENTINEL_SOURCE),
 }

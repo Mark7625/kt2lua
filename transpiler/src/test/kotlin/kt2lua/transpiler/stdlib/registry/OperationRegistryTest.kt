@@ -1,6 +1,7 @@
 package kt2lua.transpiler.stdlib.registry
 
 import kt2lua.transpiler.Expression
+import kt2lua.transpiler.RuntimeHelper
 import kt2lua.transpiler.Statement
 import kt2lua.transpiler.TypeName
 import kt2lua.transpiler.compatibility.DeclarationId
@@ -28,6 +29,7 @@ private object UnusedContext : CollectionLoweringContext {
     override fun nextTemp(prefix: String) = error("not used in this test")
     override fun listElementClassOf(name: String) = error("not used in this test")
     override fun isModuleCall(expr: Expression) = error("not used in this test")
+    override fun useRuntimeHelper(helper: RuntimeHelper) = error("not used in this test")
 }
 
 private class FakeOperation(override val id: DeclarationId, private val argCount: Int) : StdlibOperation {

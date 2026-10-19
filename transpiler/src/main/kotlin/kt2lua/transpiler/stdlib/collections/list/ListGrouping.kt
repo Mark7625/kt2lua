@@ -2,10 +2,12 @@ package kt2lua.transpiler.stdlib.collections.list
 
 import kt2lua.transpiler.Expression
 import kt2lua.transpiler.LambdaExpr
+import kt2lua.transpiler.RuntimeHelper
 import kt2lua.transpiler.TypeName
 import kt2lua.transpiler.stdlib.registry.CollectionLoweringContext
 
 fun CollectionLoweringContext.emitGroupByStatements(resultVar: String, receiverStr: String, keySelector: Expression) {
+    useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
     line("local $resultVar = {keys = {}, map = {}}")
     if (keySelector is LambdaExpr) {
         val paramName = keySelector.params.firstOrNull() ?: "it"
@@ -13,11 +15,13 @@ fun CollectionLoweringContext.emitGroupByStatements(resultVar: String, receiverS
         declareVar(paramName, TypeName.ANY)
         line("for _, $paramName in ipairs($receiverStr) do")
         pushIndent()
+        line("local __raw = $paramName")
+        line("$paramName = __nilDecode($paramName)")
         val stmts = keySelector.body.body
         stmts.forEachIndexed { i, stmt ->
             if (i == stmts.lastIndex) {
                 emitLambdaResult(stmt) {
-                    "local __k = $it; if $resultVar.map[__k] == nil then table.insert($resultVar.keys, __k); $resultVar.map[__k] = {} end; table.insert($resultVar.map[__k], $paramName)"
+                    "local __k = $it; if $resultVar.map[__k] == nil then table.insert($resultVar.keys, __k); $resultVar.map[__k] = {} end; table.insert($resultVar.map[__k], __raw)"
                 }
             } else emitStatement(stmt)
         }
@@ -29,7 +33,7 @@ fun CollectionLoweringContext.emitGroupByStatements(resultVar: String, receiverS
         line("local $fnVar = ${emitExpression(keySelector)}")
         line("for _, __v in ipairs($receiverStr) do")
         pushIndent()
-        line("local __k = $fnVar(__v)")
+        line("local __k = $fnVar(__nilDecode(__v))")
         line("if $resultVar.map[__k] == nil then table.insert($resultVar.keys, __k); $resultVar.map[__k] = {} end")
         line("table.insert($resultVar.map[__k], __v)")
         popIndent()
@@ -45,6 +49,7 @@ fun CollectionLoweringContext.emitAssociateStatements(resultVar: String, receive
         declareVar(paramName, TypeName.ANY)
         line("for _, $paramName in ipairs($receiverStr) do")
         pushIndent()
+        line("$paramName = __nilDecode($paramName)")
         val stmts = callback.body.body
         stmts.forEachIndexed { i, stmt ->
             if (i == stmts.lastIndex) {
@@ -61,7 +66,7 @@ fun CollectionLoweringContext.emitAssociateStatements(resultVar: String, receive
         line("local $fnVar = ${emitExpression(callback)}")
         line("for _, __v in ipairs($receiverStr) do")
         pushIndent()
-        line("local __p = $fnVar(__v)")
+        line("local __p = $fnVar(__nilDecode(__v))")
         line("if $resultVar.map[__p.first] == nil then table.insert($resultVar.keys, __p.first) end")
         line("$resultVar.map[__p.first] = __p.second")
         popIndent()
@@ -77,6 +82,7 @@ fun CollectionLoweringContext.emitAssociateByStatements(resultVar: String, recei
         declareVar(paramName, TypeName.ANY)
         line("for _, $paramName in ipairs($receiverStr) do")
         pushIndent()
+        line("$paramName = __nilDecode($paramName)")
         val stmts = keySelector.body.body
         stmts.forEachIndexed { i, stmt ->
             if (i == stmts.lastIndex) {
@@ -91,15 +97,17 @@ fun CollectionLoweringContext.emitAssociateByStatements(resultVar: String, recei
         line("local $fnVar = ${emitExpression(keySelector)}")
         line("for _, __v in ipairs($receiverStr) do")
         pushIndent()
-        line("local __k = $fnVar(__v)")
+        line("local __dv = __nilDecode(__v)")
+        line("local __k = $fnVar(__dv)")
         line("if $resultVar.map[__k] == nil then table.insert($resultVar.keys, __k) end")
-        line("$resultVar.map[__k] = __v")
+        line("$resultVar.map[__k] = __dv")
         popIndent()
         line("end")
     }
 }
 
 fun CollectionLoweringContext.emitAssociateWithStatements(resultVar: String, receiverStr: String, valueSelector: Expression) {
+    useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
     line("local $resultVar = {keys = {}, map = {}}")
     if (valueSelector is LambdaExpr) {
         val paramName = valueSelector.params.firstOrNull() ?: "it"
@@ -107,10 +115,13 @@ fun CollectionLoweringContext.emitAssociateWithStatements(resultVar: String, rec
         declareVar(paramName, TypeName.ANY)
         line("for _, $paramName in ipairs($receiverStr) do")
         pushIndent()
+        // $paramName (encoded) is used as the map key below - a decoded real nil can't be a key.
+        line("local __raw = $paramName")
+        line("$paramName = __nilDecode($paramName)")
         val stmts = valueSelector.body.body
         stmts.forEachIndexed { i, stmt ->
             if (i == stmts.lastIndex) {
-                emitLambdaResult(stmt) { "if $resultVar.map[$paramName] == nil then table.insert($resultVar.keys, $paramName) end; $resultVar.map[$paramName] = $it" }
+                emitLambdaResult(stmt) { "if $resultVar.map[__raw] == nil then table.insert($resultVar.keys, __raw) end; $resultVar.map[__raw] = $it" }
             } else emitStatement(stmt)
         }
         popIndent()
@@ -122,7 +133,7 @@ fun CollectionLoweringContext.emitAssociateWithStatements(resultVar: String, rec
         line("for _, __v in ipairs($receiverStr) do")
         pushIndent()
         line("if $resultVar.map[__v] == nil then table.insert($resultVar.keys, __v) end")
-        line("$resultVar.map[__v] = $fnVar(__v)")
+        line("$resultVar.map[__v] = $fnVar(__nilDecode(__v))")
         popIndent()
         line("end")
     }

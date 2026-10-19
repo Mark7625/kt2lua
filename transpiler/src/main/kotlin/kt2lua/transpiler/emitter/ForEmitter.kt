@@ -3,6 +3,7 @@ package kt2lua.transpiler.emitter
 import kt2lua.transpiler.EmitContext
 import kt2lua.transpiler.ForInStatement
 import kt2lua.transpiler.ForStatement
+import kt2lua.transpiler.RuntimeHelper
 import kt2lua.transpiler.TypeName
 
 /** `for` emission — [ForStatement] (a numeric range) and [ForInStatement] (collection
@@ -64,6 +65,10 @@ object ForEmitter {
             ctx.line("for _, $varName in ipairs($source) do")
             ctx.pushIndent()
             ctx.types.env.declare(varName, TypeName.ANY)
+            if (kind == "List" || kind == "Set") {
+                ctx.useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
+                ctx.line("$varName = __nilDecode($varName)")
+            }
         }
         stmt.body.body.forEach { ctx.emitStatement(it) }
         ctx.types.popScope()

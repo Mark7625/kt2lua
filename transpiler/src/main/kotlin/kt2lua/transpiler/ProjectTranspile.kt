@@ -78,6 +78,7 @@ private fun classInfoAcrossFiles(programs: List<Program>): Map<String, ClassInfo
                     stmt.params.associate { it.name to "" } +
                     stmt.properties.associate { it.name to it.rawType },
                 superClass = stmt.superClass,
+                isData = stmt.isData,
             )
         }
     }

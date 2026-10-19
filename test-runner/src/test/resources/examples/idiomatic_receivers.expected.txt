@@ -1,8 +1,0 @@
-local
-ready
-inner:1
-ready:1
-changed:2
-3
-none
-3

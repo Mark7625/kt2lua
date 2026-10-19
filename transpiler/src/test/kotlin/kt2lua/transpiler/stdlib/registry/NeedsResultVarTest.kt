@@ -12,7 +12,7 @@ class NeedsResultVarTest {
         assertTrue(emit("fun main() { val xs = listOf(1, 2, 3); val ys = xs.map { it * 2 } }").contains("local ys = {}"))
         assertTrue(emit("fun main() { val xs = listOf(1, 2, 3); val ys = xs.filter { it > 1 } }").contains("local ys = {}"))
         assertTrue(emit("fun main() { val xs = listOf(1, 2, 3); val total = xs.fold(0) { acc, x -> acc + x } }").contains("local acc = 0"))
-        assertTrue(emit("fun main() { val xs = listOf(1, 2, 3); val total = xs.reduce { acc, x -> acc + x } }").contains("local acc = xs[1]"))
+        assertTrue(emit("fun main() { val xs = listOf(1, 2, 3); val total = xs.reduce { acc, x -> acc + x } }").contains("local acc = __nilDecode(xs[1])"))
     }
 
     @Test
@@ -24,6 +24,6 @@ class NeedsResultVarTest {
     @Test
     fun `a pure mutation sharing the same registry still runs with no resultVar`() {
         val code = emit("fun main() { val xs = mutableListOf(1, 2, 3); xs.add(4) }")
-        assertTrue(code.contains("table.insert(xs, 4)"))
+        assertTrue(code.contains("table.insert(xs, __nilEncode(4))"))
     }
 }

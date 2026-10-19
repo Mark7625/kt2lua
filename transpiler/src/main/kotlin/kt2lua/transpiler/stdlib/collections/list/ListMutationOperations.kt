@@ -1,5 +1,6 @@
 package kt2lua.transpiler.stdlib.collections.list
 
+import kt2lua.transpiler.RuntimeHelper
 import kt2lua.transpiler.compatibility.DeclarationId
 import kt2lua.transpiler.stdlib.collections.common.structuralEq
 import kt2lua.transpiler.stdlib.registry.CollectionLoweringContext
@@ -15,8 +16,9 @@ class ListAddOperation : StdlibOperation {
     override fun resultKind(receiverKind: String?): String? = null
     override fun needsResultVar() = false
     override fun lower(call: OperationCall, resultVar: String?, ctx: CollectionLoweringContext): Boolean {
+        ctx.useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
         val receiverStr = ctx.hoistIfNeeded(call.receiver!!)
-        ctx.line("table.insert($receiverStr, ${ctx.emitExpression(call.args[0].toExpression())})")
+        ctx.line("table.insert($receiverStr, __nilEncode(${ctx.emitExpression(call.args[0].toExpression())}))")
         return true
     }
 }
@@ -28,10 +30,11 @@ class ListAddAtOperation : StdlibOperation {
     override fun resultKind(receiverKind: String?): String? = null
     override fun needsResultVar() = false
     override fun lower(call: OperationCall, resultVar: String?, ctx: CollectionLoweringContext): Boolean {
+        ctx.useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
         val receiverStr = ctx.hoistIfNeeded(call.receiver!!)
         val idx = ctx.emitExpression(call.args[0].toExpression())
         val value = ctx.emitExpression(call.args[1].toExpression())
-        ctx.line("table.insert($receiverStr, ($idx) + 1, $value)")
+        ctx.line("table.insert($receiverStr, ($idx) + 1, __nilEncode($value))")
         return true
     }
 }
@@ -43,9 +46,10 @@ class ListRemoveOperation : StdlibOperation {
     override fun resultKind(receiverKind: String?): String? = null
     override fun needsResultVar() = false
     override fun lower(call: OperationCall, resultVar: String?, ctx: CollectionLoweringContext): Boolean {
+        ctx.useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
         val receiverStr = ctx.hoistIfNeeded(call.receiver!!)
         val targetExpr = call.args[0].toExpression()
-        val target = ctx.emitExpression(targetExpr)
+        val target = "__nilEncode(${ctx.emitExpression(targetExpr)})"
         ctx.line("for __i, __v in ipairs($receiverStr) do if ${ctx.structuralEq(targetExpr, "__v", target)} then table.remove($receiverStr, __i); break end end")
         return true
     }
@@ -58,10 +62,11 @@ class ListSetOperation : StdlibOperation {
     override fun resultKind(receiverKind: String?): String? = null
     override fun needsResultVar() = false
     override fun lower(call: OperationCall, resultVar: String?, ctx: CollectionLoweringContext): Boolean {
+        ctx.useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
         val receiverStr = ctx.hoistIfNeeded(call.receiver!!)
         val idx = ctx.emitExpression(call.args[0].toExpression())
         val value = ctx.emitExpression(call.args[1].toExpression())
-        ctx.line("$receiverStr[($idx) + 1] = $value")
+        ctx.line("$receiverStr[($idx) + 1] = __nilEncode($value)")
         return true
     }
 }
