@@ -106,6 +106,8 @@ private val NUMERIC_CAST_RESULT = mapOf(
     "toInt" to TypeName.INT, "toLong" to TypeName.INT, "toShort" to TypeName.INT, "toByte" to TypeName.INT,
 )
 
+private val DOUBLE_MATH_FUNCTIONS = setOf("sqrt", "floor", "ceil", "sin", "cos", "tan", "exp", "log", "log2", "log10", "hypot", "pow")
+
 private val BUILTIN_SIGS = mapOf(
     "println" to FunctionSig(emptyList(), TypeName.UNIT),
     "print" to FunctionSig(emptyList(), TypeName.UNIT),
@@ -260,7 +262,7 @@ class TypeAnalyzer {
         is BooleanLiteral -> TypeName.BOOLEAN
         NullLiteral -> TypeName.ANY
         is StringTemplateLiteral -> TypeName.STRING
-        is Identifier -> env.lookup(expr.name) ?: TypeName.ANY
+        is Identifier -> env.lookup(expr.name) ?: if (expr.name == "PI" || expr.name == "E") TypeName.DOUBLE else TypeName.ANY
         is ParenExpr -> inferExprType(expr.expr)
         is UnaryExpr -> if (expr.op == "!") TypeName.BOOLEAN else inferExprType(expr.expr)
         is BinaryExpr -> inferBinaryType(expr)
@@ -292,6 +294,8 @@ class TypeAnalyzer {
 
     private fun inferMethodCallType(expr: MethodCallExpr): TypeName {
         if (expr.args.isEmpty()) NUMERIC_CAST_RESULT[expr.methodName]?.let { return it }
+        if (expr.args.isEmpty() && (expr.methodName == "roundToInt" || expr.methodName == "roundToLong")) return TypeName.INT
+        if (expr.args.size == 1 && expr.methodName == "pow" && classOfExpr(expr.obj) == null) return TypeName.DOUBLE
         val raw = classOfExpr(expr.obj)?.let { classes[it]?.methodReturnTypes?.get(expr.methodName) } ?: return TypeName.ANY
         return normalizeType(raw)
     }
@@ -312,6 +316,12 @@ class TypeAnalyzer {
     }
 
     private fun inferCallType(expr: CallExpr): TypeName {
+        val userSig = functionSigs[expr.callee]?.takeIf { it.paramNames.isNotEmpty() }
+        if (userSig != null) return userSig.returnType
+        if (expr.callee in DOUBLE_MATH_FUNCTIONS) return TypeName.DOUBLE
+        if ((expr.callee == "sign" || expr.callee == "round" || expr.callee == "truncate") && expr.args.size == 1) {
+            return if (inferExprType(expr.args[0].toExpression()) == TypeName.INT) TypeName.INT else TypeName.DOUBLE
+        }
         if (expr.callee == "abs") return inferExprType(expr.args[0].toExpression())
         if (expr.callee == "max" || expr.callee == "min") {
             val t0 = inferExprType(expr.args[0].toExpression())

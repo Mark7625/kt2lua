@@ -156,6 +156,7 @@ private fun installMath(globals: Environment) {
         val base = (a.getOrNull(1) as? Double)
         if (base != null) Math.log(x) / Math.log(base) else Math.log(x)
     })
+    math.rawSet("log10", native("log10") { a -> Math.log10(asNumber(a[0])) })
     val random = java.util.Random()
     math.rawSet("randomseed", native("randomseed") { a -> random.setSeed(asNumber(a[0]).toLong()); null })
     math.rawSet("random", native("random") { a ->

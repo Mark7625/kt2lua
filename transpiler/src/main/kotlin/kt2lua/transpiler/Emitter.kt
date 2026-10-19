@@ -425,6 +425,12 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private val NUMERIC_CAST_NAMES = setOf("toDouble", "toInt", "toFloat", "toLong", "toShort", "toByte")
 
     private fun emitMethodCallTarget(expr: MethodCallExpr): String {
+        if (expr.methodName == "pow" && expr.args.size == 1 && receiverInstanceClass(expr.obj) == null && !hasDeclaredMethod(expr)) {
+            return "(${emitExpression(expr.obj)} ^ ${emitExpression(expr.args[0].toExpression())})"
+        }
+        if (expr.methodName in setOf("roundToInt", "roundToLong") && expr.args.isEmpty() && receiverInstanceClass(expr.obj) == null) {
+            return "math.floor(${emitExpression(expr.obj)} + 0.5)"
+        }
         if (expr.methodName == "invoke" && !hasDeclaredMethod(expr) && receiverInstanceClass(expr.obj) == null) {
             return "${emitExpression(expr.obj)}(${emitArgList(expr.args)})"
         }
@@ -965,6 +971,9 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private fun emitIdentifier(name: String): String {
         if (name == "self") return types.currentReceiver() ?: name
         objectMemberPrefix(name, objectVars)?.let { return "$it.$name" }
+        if ((name == "PI" || name == "E") && types.env.lookup(name) == null && types.classInfo(name) == null) {
+            return if (name == "PI") "math.pi" else "math.exp(1)"
+        }
         types.memberReceiver(name)?.let { receiver ->
             val className = types.instanceClassOf(receiver)
             val hostName = className?.takeIf { types.classInfo(it)?.native == true }?.let { bindings.propertyName(it, name) } ?: name
@@ -1720,15 +1729,33 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             return emitArgList(expr.args)
         }
         val positional = expr.args.map { emitExpression(it.toExpression()) }
+        if (types.functionParamNames(expr.callee) == null) emitMathCall(expr.callee, positional)?.let { return it }
         return when (expr.callee) {
             "println" -> "print(${expr.args.mapIndexed { i, arg -> collectionAwareOrPlain(arg.toExpression(), positional[i]) }.joinToString(", ")})"
             "print" -> "io.write(${if (expr.args.isEmpty()) "\"\"" else formatForToString(expr.args[0].toExpression(), positional[0])})"
-            "sqrt" -> "math.sqrt(${positional[0]})"
-            "abs" -> "math.abs(${positional[0]})"
-            "pow" -> "(${positional[0]} ^ ${positional[1]})"
-            "max" -> "math.max(${positional[0]}, ${positional[1]})"
-            "min" -> "math.min(${positional[0]}, ${positional[1]})"
             else -> "${expr.callee}(${emitArgList(expr.args)})"
+        }
+    }
+
+    /** `kotlin.math`'s top-level functions; null when [name] isn't one (or has an unexpected arity). */
+    private fun emitMathCall(name: String, args: List<String>): String? {
+        val one = args.size == 1
+        val two = args.size == 2
+        return when {
+            one && name in setOf("sqrt", "abs", "floor", "ceil", "sin", "cos", "tan", "exp") -> "math.$name(${args[0]})"
+            two && name in setOf("max", "min") -> "math.$name(${args[0]}, ${args[1]})"
+            two && name == "pow" -> "(${args[0]} ^ ${args[1]})"
+            one && name == "log2" -> "(math.log(${args[0]}) / math.log(2))"
+            two && name == "log" -> "(math.log(${args[0]}) / math.log(${args[1]}))"
+            one && name in setOf("round", "sign", "truncate", "log10") -> {
+                useRuntimeHelper(RuntimeHelper.MATH)
+                "__$name(${args[0]})"
+            }
+            two && name == "hypot" -> {
+                useRuntimeHelper(RuntimeHelper.MATH)
+                "__hypot(${args[0]}, ${args[1]})"
+            }
+            else -> null
         }
     }
 

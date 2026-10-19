@@ -51,15 +51,85 @@ local function __nilDecode(v) if v == __NULL then return nil else return v end e
 
 """
 
-// Lua 5.1-style numbers have no int/float split, so a whole-number Double would print as "5"
-// instead of Kotlin's "5.0"; this is only applied where the static type is known to be Double.
+// Lua 5.1-style numbers have no int/float split, so a Double has to be formatted from its static
+// type: Kotlin prints the shortest digits that round-trip ("3.141592653589793", "5.0", "1.0E-4"),
+// switching to scientific notation below 1e-3 and from 1e7 up.
 private const val FMT_DOUBLE_SOURCE = """local function __fmtDouble(x)
   x = tonumber(x)
   if x ~= x then return "NaN" end
   if x == math.huge then return "Infinity" end
   if x == -math.huge then return "-Infinity" end
-  if x == math.floor(x) and math.abs(x) < 1e7 then return string.format("%.1f", x) end
-  return tostring(x)
+  if x == 0 then
+    if 1 / x < 0 then return "-0.0" end
+    return "0.0"
+  end
+  local e
+  for p = 0, 16 do
+    e = string.format("%." .. p .. "e", x)
+    if tonumber(e) == x then break end
+  end
+  local sign = ""
+  if string.sub(e, 1, 1) == "-" then
+    sign = "-"
+    e = string.sub(e, 2)
+  end
+  local epos = string.find(e, "e", 1, true)
+  local mantissa = string.sub(e, 1, epos - 1)
+  local exp = tonumber(string.sub(e, epos + 1))
+  local digits = string.sub(mantissa, 1, 1) .. string.sub(mantissa, 3)
+  if exp >= -3 and exp < 7 then
+    local intPart, fracPart
+    if exp >= 0 then
+      if #digits < exp + 1 then digits = digits .. string.rep("0", exp + 1 - #digits) end
+      intPart = string.sub(digits, 1, exp + 1)
+      fracPart = string.sub(digits, exp + 2)
+      if fracPart == "" then fracPart = "0" end
+    else
+      intPart = "0"
+      fracPart = string.rep("0", -exp - 1) .. digits
+    end
+    return sign .. intPart .. "." .. fracPart
+  end
+  local frac = string.sub(digits, 2)
+  if frac == "" then frac = "0" end
+  return sign .. string.sub(digits, 1, 1) .. "." .. frac .. "E" .. exp
+end
+
+"""
+
+// kotlin.math helpers that have no single Lua equivalent. round() ties go to the even neighbour
+// like Kotlin's, sign()/truncate() keep -0.0 and NaN, log10 falls back for runtimes without it.
+private const val MATH_SOURCE = """local function __round(x)
+  if x ~= x or x == math.huge or x == -math.huge then return x end
+  local f = math.floor(x)
+  local d = x - f
+  local r
+  if d < 0.5 then r = f
+  elseif d > 0.5 then r = f + 1
+  elseif f % 2 == 0 then r = f
+  else r = f + 1 end
+  if r == 0 and x < 0 then return -0.0 end
+  return r
+end
+local function __sign(x)
+  if x ~= x then return x end
+  if x > 0 then return 1 end
+  if x < 0 then return -1 end
+  return x
+end
+local function __truncate(x)
+  if x ~= x or x == math.huge or x == -math.huge then return x end
+  local r
+  if x >= 0 then r = math.floor(x) else r = math.ceil(x) end
+  if r == 0 and x < 0 then return -0.0 end
+  return r
+end
+local function __log10(x)
+  if math.log10 then return math.log10(x) end
+  return math.log(x) / math.log(10)
+end
+local function __hypot(a, b)
+  return math.sqrt(a * a + b * b)
 end
 
 """
@@ -118,4 +188,5 @@ enum class RuntimeHelper(val source: String) {
     FMT_DOUBLE(FMT_DOUBLE_SOURCE),
     TO_INT(TO_INT_SOURCE),
     EXCEPTION(EXCEPTION_SOURCE),
+    MATH(MATH_SOURCE),
 }
