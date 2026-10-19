@@ -77,6 +77,10 @@ private val COLLECTION_TYPE_ALIASES = mapOf(
     "List" to "List", "MutableList" to "List", "ArrayList" to "List",
     "Set" to "Set", "MutableSet" to "Set", "HashSet" to "Set", "LinkedHashSet" to "Set",
     "Map" to "Map", "MutableMap" to "Map", "HashMap" to "Map", "LinkedHashMap" to "Map",
+    // A range value is the Lua list of its integers; a floating-point range is just its two bounds.
+    "IntRange" to "List", "LongRange" to "List", "UIntRange" to "List", "ULongRange" to "List",
+    "IntProgression" to "List", "LongProgression" to "List", "UIntProgression" to "List", "ULongProgression" to "List",
+    "ClosedRange" to "List", "OpenEndRange" to "List", "ClosedFloatingPointRange" to "FloatRange",
 )
 
 /** `val callbacks = mapOf(...)` — an unannotated property's [rawType] is empty, so a Map/Set/List
@@ -306,6 +310,7 @@ class TypeAnalyzer {
         if (expr.args.isEmpty() && (expr.methodName == "roundToInt" || expr.methodName == "roundToLong")) return TypeName.INT
         if (classOfExpr(expr.obj) == null && expr.methodName in setOf("nextUp", "nextDown", "nextTowards", "withSign", "IEEErem")) return TypeName.DOUBLE
         if (expr.args.size == 1 && expr.methodName == "pow" && classOfExpr(expr.obj) == null) return TypeName.DOUBLE
+        if (expr.methodName in setOf("coerceAtLeast", "coerceAtMost", "coerceIn") && classOfExpr(expr.obj) == null) return inferExprType(expr.obj)
         val raw = classOfExpr(expr.obj)?.let { classes[it]?.methodReturnTypes?.get(expr.methodName) } ?: return TypeName.ANY
         return normalizeType(raw)
     }
@@ -317,7 +322,7 @@ class TypeAnalyzer {
     }
 
     private fun inferBinaryType(expr: BinaryExpr): TypeName {
-        if (expr.op in setOf("==", "!=", "<", ">", "<=", ">=", "&&", "||")) return TypeName.BOOLEAN
+        if (expr.op in setOf("==", "!=", "<", ">", "<=", ">=", "&&", "||", "in", "!in")) return TypeName.BOOLEAN
         val lt = inferExprType(expr.left)
         val rt = inferExprType(expr.right)
         if (expr.op == "+" && (lt == TypeName.STRING || rt == TypeName.STRING)) return TypeName.STRING

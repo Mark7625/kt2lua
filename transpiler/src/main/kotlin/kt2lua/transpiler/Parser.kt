@@ -20,7 +20,7 @@ private val MULTIPLICATIVE_OPS = mapOf(
 )
 
 /** Index into [Parser.binaryLevels] for the additive level — see [Parser.parseAdditive]. */
-private const val ADDITIVE_LEVEL = 8
+private const val ADDITIVE_LEVEL = 9
 
 /** One precedence level of this subset's binary operators, loosest-binding first. [matchOp]
  * recognizes and consumes this level's operator at the current token, or returns null without
@@ -321,7 +321,7 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
     }
 
     /** Loosest-to-tightest, matching real Kotlin's relative precedence: `||`, `&&`, `==`/`!=`,
-     * `<`/`>`/`<=`/`>=`, `in`/`!in`, `?:`, `to`, `..`/`until`/`downTo`, `+`/`-`, `*`/`/`/`%`. */
+     * `<`/`>`/`<=`/`>=`, `in`/`!in`, `?:`, `to`, `step`, `..`/`until`/`downTo`, `+`/`-`, `*`/`/`/`%`. */
     private val binaryLevels: List<BinaryLevel> = listOf(
         BinaryLevel({ if (match(TokenType.OR_OR)) "||" else null }),
         BinaryLevel({ if (match(TokenType.AND_AND)) "&&" else null }),
@@ -330,6 +330,9 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
         BinaryLevel({ matchInOp() }),
         BinaryLevel({ if (match(TokenType.ELVIS)) "?:" else null }, build = { _, l, r -> ElvisExpr(l, r) }),
         BinaryLevel({ matchInfixTo() }, build = { _, l, r -> ToPairExpr(l, r) }),
+        BinaryLevel({ if (match(TokenType.STEP)) "step" else null }, build = { _, l, r ->
+            (l as? RangeExpr)?.copy(step = r) ?: error("'step' is only supported on a range, like 1..10 step 2")
+        }),
         BinaryLevel({ matchRangeOp() }, build = { op, l, r -> RangeExpr(l, r, inclusive = op != "until", descending = op == "downTo") }),
         BinaryLevel({ matchTokenOp(ADDITIVE_OPS) }),
         BinaryLevel({ matchTokenOp(MULTIPLICATIVE_OPS) }),

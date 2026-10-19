@@ -23,11 +23,11 @@ class CompatIssueTest {
 
     @Test
     fun `an unambiguous unsupported declaration produces a pre-filled GitHub issue URL`() {
-        runCompatCommand(arrayOf("compat", "issue", "downTo"))
+        runCompatCommand(arrayOf("compat", "issue", "CharRange"))
         val output = captured.toString()
-        assertTrue(output.contains("Support kotlin.ranges.downTo(Int, Int)"))
+        assertTrue(output.contains("Support kotlin.ranges.CharRange"))
         assertTrue(output.contains("https://github.com/Mark7625/kt2lua/issues/new?"))
-        assertTrue(output.contains("title=Support+kotlin.ranges.downTo"))
+        assertTrue(output.contains("title=Support+kotlin.ranges.CharRange"))
         assertTrue(output.contains("labels=compatibility"))
     }
 

@@ -101,7 +101,6 @@
     {"id": "kotlin.collections.minus(List<T>, T)", "name": "minus", "kind": "extension", "receiver": "List<T>", "status": "supported", "implementation": "Emitter.emitListMinusExpr"},
     {"id": "kotlin.collections.minus(List<T>, Iterable<T>)", "name": "minus", "kind": "extension", "receiver": "List<T>", "status": "supported", "implementation": "Emitter.emitListMinusExpr"},
     {"id": "kotlin.collections.List.equals(Any)", "name": "equals", "kind": "function", "receiver": "List<T>", "status": "supported", "implementation": "Emitter.emitCollectionEquals"},
-
     {"id": "kotlin.collections.setOf(T)", "name": "setOf", "kind": "function", "status": "supported", "implementation": "SetConstructorOperation"},
     {"id": "kotlin.collections.mutableSetOf(T)", "name": "mutableSetOf", "kind": "function", "status": "supported", "implementation": "SetConstructorOperation"},
     {"id": "kotlin.collections.hashSetOf(T)", "name": "hashSetOf", "kind": "function", "status": "partial", "implementation": "SetConstructorOperation", "limitations": ["Unified onto the same insertion-ordered representation setOf()/mutableSetOf() use — real Kotlin's HashSet doesn't guarantee any particular order, so this is a stricter guarantee than Kotlin itself makes, not a looser one"]},
@@ -115,7 +114,6 @@
     {"id": "kotlin.collections.minus(Set<T>, T)", "name": "minus", "kind": "extension", "receiver": "Set<T>", "status": "supported", "implementation": "Emitter.emitSetPlusMinusExpr"},
     {"id": "kotlin.collections.minus(Set<T>, Iterable<T>)", "name": "minus", "kind": "extension", "receiver": "Set<T>", "status": "supported", "implementation": "Emitter.emitSetPlusMinusExpr"},
     {"id": "kotlin.collections.Set.equals(Any)", "name": "equals", "kind": "function", "receiver": "Set<T>", "status": "supported", "implementation": "Emitter.emitCollectionEquals"},
-
     {"id": "kotlin.collections.mapOf(Pair<K, V>)", "name": "mapOf", "kind": "function", "status": "supported", "implementation": "MapConstructorOperation"},
     {"id": "kotlin.collections.mutableMapOf(Pair<K, V>)", "name": "mutableMapOf", "kind": "function", "status": "supported", "implementation": "MapConstructorOperation"},
     {"id": "kotlin.collections.hashMapOf(Pair<K, V>)", "name": "hashMapOf", "kind": "function", "status": "partial", "implementation": "MapConstructorOperation", "limitations": ["Unified onto the same insertion-ordered representation mapOf()/mutableMapOf() use, same note as hashSetOf()"]},
@@ -302,8 +300,8 @@
     {"id": "kotlin.collections.plusAssign(*)", "name": "plusAssign", "kind": "function", "status": "unsupported"},
     {"id": "kotlin.collections.plusElement(*)", "name": "plusElement", "kind": "function", "status": "unsupported"},
     {"id": "kotlin.collections.putAll(*)", "name": "putAll", "kind": "function", "status": "unsupported"},
-    {"id": "kotlin.collections.random(*)", "name": "random", "kind": "function", "status": "unsupported"},
-    {"id": "kotlin.collections.randomOrNull(*)", "name": "randomOrNull", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.collections.random(*)", "name": "random", "kind": "function", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Direct math.random over the list (or a Set's list); the random() form with a Random argument is not supported"},
+    {"id": "kotlin.collections.randomOrNull(*)", "name": "randomOrNull", "kind": "function", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Direct math.random over the list (or a Set's list); the random() form with a Random argument is not supported"},
     {"id": "kotlin.collections.reduceIndexed(*)", "name": "reduceIndexed", "kind": "function", "status": "unsupported"},
     {"id": "kotlin.collections.reduceIndexedOrNull(*)", "name": "reduceIndexedOrNull", "kind": "function", "status": "unsupported"},
     {"id": "kotlin.collections.reduceOrNull(*)", "name": "reduceOrNull", "kind": "function", "status": "unsupported"},

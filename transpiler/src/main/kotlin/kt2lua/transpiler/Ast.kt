@@ -210,7 +210,7 @@ data class ToPairExpr(val first: Expression, val second: Expression) : Expressio
 /** `a..b`, `a until b` and `a downTo b` used as a value (a `for` header or a `when` condition parses
  * its own range instead). It compiles to a Lua list of the integers in the range, except where the
  * emitter can use the bounds directly (`x in a..b`, `Random.nextInt(a..b)`). */
-data class RangeExpr(val start: Expression, val end: Expression, val inclusive: Boolean, val descending: Boolean = false) : Expression()
+data class RangeExpr(val start: Expression, val end: Expression, val inclusive: Boolean, val descending: Boolean = false, val step: Expression? = null) : Expression()
 
 /** Requires an explicit `else` since this subset does no exhaustiveness checking. Compiles to
  * an IIFE with `return` per branch, not [IfExpr]'s `cond and a or b` idiom, so it has none of

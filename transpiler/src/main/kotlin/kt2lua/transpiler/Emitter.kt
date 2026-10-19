@@ -213,6 +213,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         types.registerExternalClass("Sequence", ClassInfo(emptyList(), emptySet(), false, native = true))
         types.registerExternalClass("Pair", ClassInfo(emptyList(), emptySet(), false, native = true))
         types.registerExternalClass(
+            "FloatRange",
+            ClassInfo(emptyList(), emptySet(), false, propertyTypes = mapOf("start" to "Double", "endInclusive" to "Double"), native = true),
+        )
+        types.registerExternalClass(
             "Random",
             ClassInfo(
                 emptyList(), RANDOM_METHODS, false,
@@ -439,6 +443,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private val NUMERIC_CAST_NAMES = setOf("toDouble", "toInt", "toFloat", "toLong", "toShort", "toByte")
 
     private fun emitMethodCallTarget(expr: MethodCallExpr): String {
+        asRange(expr)?.let { return emitRangeExpr(it) }
+        if (expr.methodName == "contains" && expr.args.size == 1 && receiverInstanceClass(expr.obj) == "FloatRange") {
+            return emitContains(expr.obj, emitExpression(expr.obj), emitExpression(expr.args[0].toExpression()))
+        }
         if (expr.methodName in RANDOM_METHODS && receiverInstanceClass(expr.obj) == "Random") {
             if (expr.methodName == "asJavaRandom" || expr.methodName == "asKotlinRandom") return emitExpression(expr.obj)
             val (argStrs, argExprs) = randomArguments(expr.args)
@@ -599,6 +607,13 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                 }
                 else -> {}
             }
+        }
+        if ((collClass == "List" || collClass == "Set") && expr.args.isEmpty() && expr.methodName in setOf("random", "randomOrNull") && !isModuleCall(expr.obj)) {
+            val items = if (collClass == "Set") "${emitExpression(expr.obj)}.list" else emitExpression(expr.obj)
+            if (collClass == "List") useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
+            val pick = if (collClass == "List") "__nilDecode(t[math.random(#t)])" else "t[math.random(#t)]"
+            return if (expr.methodName == "random") "(function(t) return $pick end)($items)"
+            else "((function(t) if #t > 0 then return $pick end end)($items))"
         }
         if (collClass == "List") {
             val receiverStr = emitExpression(expr.obj)
@@ -765,7 +780,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
 
     private fun instanceClassOfNonRandomExpr(expr: Expression): String? = when (expr) {
         is ToPairExpr -> "Pair"
-        is RangeExpr -> "List"
+        is RangeExpr -> if (isFloatRange(expr)) "FloatRange" else "List"
         is IndexExpr -> (expr.obj as? Identifier)?.takeIf { instanceClassOfExpr(it) == "List" }?.let { types.listElementClassOf(it.name) }
         is StringTemplateLiteral -> "String"
         is Identifier -> {
@@ -794,7 +809,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             else types.memberReceiver(expr.callee)?.let { receiver ->
                 types.instanceClassOf(receiver)?.let { types.methodReturnClass(it, expr.callee) }
             } ?: types.functionReturnClass(expr.callee)
-        is MethodCallExpr -> if (expr.methodName == "copy" && receiverInstanceClass(expr.obj)?.let { bindings.isDataRecord(it) } == true) {
+        is MethodCallExpr -> if (asRange(expr) != null) "List"
+        else if (expr.methodName == "copy" && receiverInstanceClass(expr.obj)?.let { bindings.isDataRecord(it) } == true) {
             receiverInstanceClass(expr.obj)
         } else if (expr.methodName in setOf("also", "apply", "takeIf", "takeUnless") && !hasDeclaredMethod(expr)) {
             receiverInstanceClass(expr.obj)
@@ -972,14 +988,13 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         is LambdaExpr -> emitLambda(expr)
         is IndexExpr -> emitIndex(expr)
         is ToPairExpr -> "{first = ${emitExpression(expr.first)}, second = ${emitExpression(expr.second)}}"
-        is RangeExpr -> {
-            val limit = if (expr.inclusive) emitExpression(expr.end) else "(${emitExpression(expr.end)} - 1)"
-            val step = if (expr.descending) ", -1" else ""
-            "(function() local __r = {} for __i = ${emitExpression(expr.start)}, $limit$step do __r[#__r + 1] = __i end return __r end)()"
-        }
+        is RangeExpr -> emitRangeExpr(expr)
     }
 
     private fun emitPropertyAccess(receiver: Expression, name: String): String {
+        if (name in setOf("first", "last") && receiverInstanceClass(receiver) == "List") {
+            return inlineOnce(listOf(receiver), listOf(emitExpression(receiver))) { (t) -> if (name == "first") "$t[1]" else "$t[#$t]" }
+        }
         if (name == "absoluteValue" && receiverInstanceClass(receiver) == null) return "math.abs(${emitExpression(receiver)})"
         if (name == "ulp" && receiverInstanceClass(receiver) == null) {
             useRuntimeHelper(RuntimeHelper.MATH_FLOAT)
@@ -1156,6 +1171,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         "Set" -> "($collStr.has[${valueExpr?.let { canonicalKeyStr(it, valueStr) } ?: valueStr}] ~= nil)"
         "Map" -> "($collStr.map[${valueExpr?.let { canonicalKeyStr(it, valueStr) } ?: valueStr}] ~= nil)"
         "String" -> "(string.find($collStr, $valueStr, 1, true) ~= nil)"
+        "FloatRange" -> "(function(v, r) return v >= r.start and v <= r.endInclusive end)($valueStr, $collStr)"
         "List" -> {
             useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
             val encodedValue = "__nilEncode($valueStr)"
@@ -1833,9 +1849,38 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         }
     }
 
+    private fun isFloatRange(expr: RangeExpr): Boolean =
+        types.inferExprType(expr.start) == TypeName.DOUBLE || types.inferExprType(expr.end) == TypeName.DOUBLE
+
+    /** An integer range is the Lua list of its values; a floating-point one only has its two bounds. */
+    private fun emitRangeExpr(expr: RangeExpr): String {
+        if (isFloatRange(expr)) return "{start = ${emitExpression(expr.start)}, endInclusive = ${emitExpression(expr.end)}}"
+        val limit = if (expr.inclusive) emitExpression(expr.end) else "(${emitExpression(expr.end)} - 1)"
+        val step = when {
+            expr.step != null && expr.descending -> ", -(${emitExpression(expr.step)})"
+            expr.step != null -> ", ${emitExpression(expr.step)}"
+            expr.descending -> ", -1"
+            else -> ""
+        }
+        return "(function() local __r = {} for __i = ${emitExpression(expr.start)}, $limit$step do __r[#__r + 1] = __i end return __r end)()"
+    }
+
+    /** A range written as a call: `1.rangeTo(5)`, `1.until(5)`, `5.downTo(1)`, `(1..10).step(2)`. */
+    private fun asRange(e: Expression): RangeExpr? = when (e) {
+        is RangeExpr -> e
+        is ParenExpr -> asRange(e.expr)
+        is MethodCallExpr -> if (e.args.size != 1 || hasDeclaredMethod(e)) null else when {
+            e.methodName in setOf("rangeTo", "rangeUntil", "until", "downTo") && receiverInstanceClass(e.obj) == null ->
+                RangeExpr(e.obj, e.args[0].toExpression(), inclusive = e.methodName == "rangeTo" || e.methodName == "downTo", descending = e.methodName == "downTo")
+            e.methodName == "step" -> asRange(e.obj)?.copy(step = e.args[0].toExpression())
+            else -> null
+        }
+        else -> null
+    }
+
     /** `x in a..b` compares against the bounds instead of building the range as a list. */
     private fun inRangeOrContains(expr: BinaryExpr, leftStr: String, rightStr: String): String {
-        val range = (expr.right as? RangeExpr)?.takeIf { !it.descending }
+        val range = (expr.right as? RangeExpr)?.takeIf { !it.descending && it.step == null }
             ?: return emitContains(expr.right, rightStr, leftStr, expr.left)
         val upper = if (range.inclusive) "<=" else "<"
         return inlineOnce(listOf(expr.left), listOf(leftStr)) { (x) ->
@@ -1898,6 +1943,13 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                 inlineOnce(listOf(expr.obj, expr.args[0].toExpression()), listOf(receiver, args[0])) { (x, sign) ->
                     "(($sign < 0 or 1 / $sign < 0) and -math.abs($x) or math.abs($x))"
                 }
+            expr.methodName == "coerceAtLeast" && args.size == 1 -> "math.max($receiver, ${args[0]})"
+            expr.methodName == "coerceAtMost" && args.size == 1 -> "math.min($receiver, ${args[0]})"
+            expr.methodName == "coerceIn" && args.size == 2 -> "math.min(math.max($receiver, ${args[0]}), ${args[1]})"
+            expr.methodName == "coerceIn" && args.size == 1 && (expr.args[0].toExpression() as? RangeExpr)?.let { it.inclusive && !it.descending && it.step == null } == true -> {
+                val range = expr.args[0].toExpression() as RangeExpr
+                "math.min(math.max($receiver, ${emitExpression(range.start)}), ${emitExpression(range.end)})"
+            }
             expr.methodName == "IEEErem" && args.size == 1 -> {
                 useRuntimeHelper(RuntimeHelper.MATH_PRECISE)
                 "__ieeerem($receiver, ${args[0]})"
