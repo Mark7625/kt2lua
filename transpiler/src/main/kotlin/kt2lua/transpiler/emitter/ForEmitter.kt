@@ -62,10 +62,16 @@ object ForEmitter {
             // A Sequence value is itself a factory for a plain Lua iterator function (see
             // Emitter.emitSequenceExpr) — exactly the shape `for x in f do ... end` already
             // expects, so no `ipairs`/`.list` unwrapping is needed here at all.
-            val varName = stmt.varNames[0]
+            val varName = if (stmt.varNames.size > 1) "__e" else stmt.varNames[0]
             ctx.line("for $varName in (${ctx.emitExpression(stmt.iterable)})() do")
             ctx.pushIndent()
             ctx.types.env.declare(varName, TypeName.ANY)
+            if (stmt.varNames.size > 1) {
+                stmt.varNames.take(2).forEachIndexed { i, name ->
+                    ctx.types.env.declare(name, TypeName.ANY)
+                    ctx.line("local $name = __e.${if (i == 0) "first" else "second"}")
+                }
+            }
         } else {
             val iterableStr = ctx.emitExpression(stmt.iterable)
             val varName = stmt.varNames[0]

@@ -117,6 +117,31 @@ class InterpreterTest {
     }
 
     @Test
+    fun `coroutines yield values back and forth and report their status`() {
+        val output = run(
+            """
+            local co = coroutine.create(function(a, b)
+                local c = coroutine.yield(a + b)
+                local d = coroutine.yield(c * 2)
+                return "done", d
+            end)
+            print(coroutine.resume(co, 1, 2))
+            print(coroutine.status(co))
+            print(coroutine.resume(co, 10))
+            print(coroutine.resume(co, "last"))
+            print(coroutine.status(co))
+            print(coroutine.resume(co))
+            local gen = coroutine.wrap(function() for i = 1, 3 do coroutine.yield(i) end end)
+            print(gen(), gen(), gen())
+            """.trimIndent()
+        )
+        assertEquals(
+            "true\t3\nsuspended\ntrue\t20\ntrue\tdone\tlast\ndead\nfalse\tcannot resume dead coroutine\n1\t2\t3\n",
+            output,
+        )
+    }
+
+    @Test
     fun `pairs and ipairs iterate tables`() {
         val output = run(
             """

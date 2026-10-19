@@ -89,6 +89,7 @@ internal fun installStdlib(interp: Interpreter, globals: Environment, onOutput: 
     globals.define("unpack", tableUnpackNative())
 
     installMath(globals)
+    installCoroutines(interp, globals)
     installString(globals)
     installTable(globals)
     installOs(globals)

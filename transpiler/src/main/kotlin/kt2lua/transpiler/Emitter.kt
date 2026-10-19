@@ -117,6 +117,10 @@ private fun quoteLuaString(text: String, style: QuoteStyle): String {
 
 private val SEQUENCE_CHAIN_METHODS = setOf(
     "map", "filter", "take", "drop", "takeWhile", "dropWhile", "onEach", "mapNotNull", "filterNotNull", "distinct",
+    "filterNot", "mapIndexed", "mapIndexedNotNull", "filterIndexed", "onEachIndexed", "withIndex", "flatMap", "flatMapIndexed",
+    "flatten", "zip", "zipWithNext", "windowed", "chunked", "plus", "minus", "plusElement", "minusElement",
+    "runningFold", "runningFoldIndexed", "scan", "scanIndexed", "runningReduce", "runningReduceIndexed",
+    "distinctBy", "requireNoNulls", "constrainOnce", "orEmpty", "ifEmpty",
 )
 
 class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bindings: LuaBindings = LuaBindings()) : EmitContext, CollectionLoweringContext {
@@ -586,6 +590,28 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                 expr.methodName == "takeWhile" && arg0 != null -> return emitSequenceTakeWhileExpr(expr.obj, arg0)
                 expr.methodName == "dropWhile" && arg0 != null -> return emitSequenceDropWhileExpr(expr.obj, arg0)
                 expr.methodName == "distinct" && expr.args.isEmpty() -> return emitSequenceDistinctExpr(expr.obj)
+                expr.methodName == "distinctBy" && arg0 != null -> return emitSequenceDistinctByExpr(expr.obj, arg0)
+                expr.methodName == "filterNot" && arg0 != null -> return emitSequenceFilterExpr(expr.obj, arg0, negate = true)
+                expr.methodName in setOf("mapIndexed", "mapIndexedNotNull", "filterIndexed", "onEachIndexed") && arg0 != null ->
+                    return emitSequenceIndexedExpr(expr.methodName, expr.obj, arg0)
+                expr.methodName == "withIndex" && expr.args.isEmpty() -> return emitSequenceIndexedExpr("withIndex", expr.obj, null)
+                expr.methodName == "flatMap" && arg0 != null -> return emitSequenceFlatMapExpr(expr.obj, arg0, indexed = false)
+                expr.methodName == "flatMapIndexed" && arg0 != null -> return emitSequenceFlatMapExpr(expr.obj, arg0, indexed = true)
+                expr.methodName == "flatten" && expr.args.isEmpty() -> return emitSequenceFlatMapExpr(expr.obj, null, indexed = false)
+                expr.methodName == "zip" && arg0 != null -> return emitSequenceZipExpr(expr.obj, arg0, expr.args.getOrNull(1)?.toExpression())
+                expr.methodName == "zipWithNext" -> return emitSequenceZipWithNextExpr(expr.obj, arg0)
+                expr.methodName == "windowed" && arg0 != null -> return emitSequenceWindowedExpr(expr)
+                expr.methodName == "chunked" && arg0 != null -> return emitSequenceWindowedExpr(expr)
+                expr.methodName in setOf("plus", "plusElement") && arg0 != null -> return emitSequencePlusExpr(expr.obj, arg0, expr.methodName == "plusElement")
+                expr.methodName in setOf("minus", "minusElement") && arg0 != null -> return emitSequenceMinusExpr(expr.obj, arg0, expr.methodName == "minusElement")
+                expr.methodName in setOf("runningFold", "scan") && expr.args.size == 2 ->
+                    return emitSequenceRunningExpr(expr.obj, fold = true, indexed = false, expr.args[0].toExpression(), expr.args[1].toExpression())
+                expr.methodName in setOf("runningFoldIndexed", "scanIndexed") && expr.args.size == 2 ->
+                    return emitSequenceRunningExpr(expr.obj, fold = true, indexed = true, expr.args[0].toExpression(), expr.args[1].toExpression())
+                expr.methodName == "runningReduce" && arg0 != null -> return emitSequenceRunningExpr(expr.obj, fold = false, indexed = false, null, arg0)
+                expr.methodName == "runningReduceIndexed" && arg0 != null -> return emitSequenceRunningExpr(expr.obj, fold = false, indexed = true, null, arg0)
+                expr.methodName in setOf("requireNoNulls", "constrainOnce", "orEmpty") && expr.args.isEmpty() -> return seqStr
+                expr.methodName == "ifEmpty" && arg0 != null -> return emitSequenceIfEmptyExpr(expr.obj, arg0)
                 expr.methodName == "first" && expr.args.isEmpty() -> return "(($seqStr)())()"
                 expr.methodName == "firstOrNull" && expr.args.isEmpty() -> return "(($seqStr)())()"
                 expr.methodName in setOf("find", "first", "firstOrNull") && arg0 != null ->
@@ -799,7 +825,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         is ParenExpr -> instanceClassOfExpr(expr.expr)
         is NotNullAssertExpr -> instanceClassOfExpr(expr.expr)
         is CallExpr -> operationRegistry.resolveTopLevel(expr.callee, OperationCall(null, expr.args), this)?.resultKind(null)
-            ?: if (expr.callee == "sequenceOf" || (expr.callee == "generateSequence" && expr.args.size == 2)) "Sequence"
+            ?: if (expr.callee in setOf("sequenceOf", "generateSequence", "emptySequence", "sequence")) "Sequence"
             else if (expr.callee == "runCatching" && types.memberReceiver(expr.callee) == null) RESULT_CLASS
             else if (expr.callee == "run" && expr.args.size == 1 && types.memberReceiver(expr.callee) == null)
                 scopeResultClass(expr.args.single().toExpression(), null, noParams = true)
@@ -835,7 +861,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         })
         is ElvisExpr -> receiverInstanceClass(expr.left) ?: receiverInstanceClass(expr.right)
         is BinaryExpr -> if (expr.op == "+" || expr.op == "-") {
-            receiverInstanceClass(expr.left)?.takeIf { it == "List" || it == "Set" }
+            receiverInstanceClass(expr.left)?.takeIf { it == "List" || it == "Set" || it == "Sequence" }
         } else null
         is IfExpr -> receiverInstanceClass(expr.thenExpr)?.takeIf { it == receiverInstanceClass(expr.elseExpr) }
         else -> null
@@ -1318,7 +1344,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private fun emitSequenceMapExpr(upstream: Expression, callback: Expression): String = emitSequenceExpr(
         setup = {
             emitSequenceUpstream(upstream)
-            line("local __fn = ${if (callback is LambdaExpr) emitLambda(callback) else emitExpression(callback)}")
+            line("local __fn = ${callbackStrFor(callback, upstream)}")
         },
         produce = {
             line("local __v = __it()")
@@ -1327,17 +1353,17 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         },
     )
 
-    private fun emitSequenceFilterExpr(upstream: Expression, callback: Expression): String = emitSequenceExpr(
+    private fun emitSequenceFilterExpr(upstream: Expression, callback: Expression, negate: Boolean = false): String = emitSequenceExpr(
         setup = {
             emitSequenceUpstream(upstream)
-            line("local __fn = ${if (callback is LambdaExpr) emitLambda(callback) else emitExpression(callback)}")
+            line("local __fn = ${callbackStrFor(callback, upstream)}")
         },
         produce = {
             line("while true do")
             pushIndent()
             line("local __v = __it()")
             line("if __v == nil then return nil end")
-            line("if __fn(__v) then return __v end")
+            line(if (negate) "if not __fn(__v) then return __v end" else "if __fn(__v) then return __v end")
             popIndent()
             line("end")
         },
@@ -1346,7 +1372,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private fun emitSequenceMapNotNullExpr(upstream: Expression, callback: Expression): String = emitSequenceExpr(
         setup = {
             emitSequenceUpstream(upstream)
-            line("local __fn = ${if (callback is LambdaExpr) emitLambda(callback) else emitExpression(callback)}")
+            line("local __fn = ${callbackStrFor(callback, upstream)}")
         },
         produce = {
             line("while true do")
@@ -1368,7 +1394,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private fun emitSequenceOnEachExpr(upstream: Expression, callback: Expression): String = emitSequenceExpr(
         setup = {
             emitSequenceUpstream(upstream)
-            line("local __fn = ${if (callback is LambdaExpr) emitLambda(callback) else emitExpression(callback)}")
+            line("local __fn = ${callbackStrFor(callback, upstream)}")
         },
         produce = {
             line("local __v = __it()")
@@ -1403,7 +1429,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private fun emitSequenceTakeWhileExpr(upstream: Expression, callback: Expression): String = emitSequenceExpr(
         setup = {
             emitSequenceUpstream(upstream)
-            line("local __fn = ${if (callback is LambdaExpr) emitLambda(callback) else emitExpression(callback)}")
+            line("local __fn = ${callbackStrFor(callback, upstream)}")
             line("local __done = false")
         },
         produce = {
@@ -1417,7 +1443,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private fun emitSequenceDropWhileExpr(upstream: Expression, callback: Expression): String = emitSequenceExpr(
         setup = {
             emitSequenceUpstream(upstream)
-            line("local __fn = ${if (callback is LambdaExpr) emitLambda(callback) else emitExpression(callback)}")
+            line("local __fn = ${callbackStrFor(callback, upstream)}")
             line("local __dropping = true")
         },
         produce = {
@@ -1442,6 +1468,285 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             line("if not __seen[__v] then __seen[__v] = true; return __v end")
             popIndent()
             line("end")
+        },
+    )
+
+    private fun callbackStr(callback: Expression, elementClass: String? = null): String =
+        if (callback is LambdaExpr) emitLambda(callback, elementClass) else emitExpression(callback)
+
+    private fun callbackStrFor(callback: Expression, upstream: Expression): String = callbackStr(callback, sequenceElementClass(upstream))
+
+    /** The class every element of a Sequence is known to be, so a lambda over it can call that class's methods (`it.sum()` on windows). */
+    private fun sequenceElementClass(seq: Expression): String? = when {
+        seq is ParenExpr -> sequenceElementClass(seq.expr)
+        seq is MethodCallExpr && seq.methodName in setOf("windowed", "chunked") && seq.args.lastOrNull()?.toExpression() !is LambdaExpr -> "List"
+        seq is MethodCallExpr && seq.methodName in setOf("filter", "filterNot", "take", "drop", "takeWhile", "dropWhile", "distinct", "distinctBy", "onEach",
+            "onEachIndexed", "filterIndexed", "requireNoNulls", "constrainOnce", "orEmpty", "plus", "minus", "plusElement", "minusElement") -> sequenceElementClass(seq.obj)
+        seq is CallExpr && seq.callee == "sequenceOf" && seq.args.isNotEmpty() &&
+            seq.args.all { receiverInstanceClass(it.toExpression()) == "List" } -> "List"
+        else -> null
+    }
+
+    private fun emitSequenceDistinctByExpr(upstream: Expression, selector: Expression): String = emitSequenceExpr(
+        setup = { emitSequenceUpstream(upstream); line("local __fn = ${callbackStrFor(selector, upstream)}"); line("local __seen = {}") },
+        produce = {
+            line("while true do")
+            pushIndent()
+            line("local __v = __it()")
+            line("if __v == nil then return nil end")
+            line("local __k = __fn(__v)")
+            line("if not __seen[__k] then __seen[__k] = true; return __v end")
+            popIndent()
+            line("end")
+        },
+    )
+
+    /** mapIndexed / mapIndexedNotNull / filterIndexed / onEachIndexed (the callback gets the index first) and withIndex. */
+    private fun emitSequenceIndexedExpr(kind: String, upstream: Expression, callback: Expression?): String = emitSequenceExpr(
+        setup = {
+            emitSequenceUpstream(upstream)
+            if (callback != null) line("local __fn = ${callbackStr(callback)}")
+            line("local __idx = -1")
+        },
+        produce = {
+            line("while true do")
+            pushIndent()
+            line("local __v = __it()")
+            line("if __v == nil then return nil end")
+            line("__idx = __idx + 1")
+            when (kind) {
+                "mapIndexed" -> line("return __fn(__idx, __v)")
+                "mapIndexedNotNull" -> line("local __r = __fn(__idx, __v); if __r ~= nil then return __r end")
+                "filterIndexed" -> line("if __fn(__idx, __v) then return __v end")
+                "onEachIndexed" -> line("__fn(__idx, __v); return __v")
+                else -> line("return {index = __idx, value = __v, first = __idx, second = __v}")
+            }
+            popIndent()
+            line("end")
+        },
+    )
+
+    /** flatMap / flatMapIndexed / flatten: the inner value may be a List, a Set or a Sequence. */
+    private fun emitSequenceFlatMapExpr(upstream: Expression, callback: Expression?, indexed: Boolean): String = emitSequenceExpr(
+        setup = {
+            emitSequenceUpstream(upstream)
+            if (callback != null) line("local __fn = ${callbackStrFor(callback, upstream)}")
+            line("local __inner = nil")
+            if (indexed) line("local __idx = -1")
+        },
+        produce = {
+            line("while true do")
+            pushIndent()
+            line("if __inner then")
+            pushIndent()
+            line("local __x = __inner()")
+            line("if __x ~= nil then return __x end")
+            line("__inner = nil")
+            popIndent()
+            line("end")
+            line("local __v = __it()")
+            line("if __v == nil then return nil end")
+            if (indexed) line("__idx = __idx + 1")
+            line("local __r = " + when {
+                callback == null -> "__v"
+                indexed -> "__fn(__idx, __v)"
+                else -> "__fn(__v)"
+            })
+            line("if type(__r) == \"function\" then __inner = __r() else local __a = __r.list or __r; local __i = 0; __inner = function() __i = __i + 1; return __a[__i] end end")
+            popIndent()
+            line("end")
+        },
+    )
+
+    private fun emitSequenceZipExpr(upstream: Expression, other: Expression, transform: Expression?): String = emitSequenceExpr(
+        setup = {
+            emitSequenceUpstream(upstream)
+            line("local __it2 = (${emitExpression(other)})()")
+            if (transform != null) line("local __fn = ${callbackStr(transform)}")
+        },
+        produce = {
+            line("local __v = __it()")
+            line("if __v == nil then return nil end")
+            line("local __w = __it2()")
+            line("if __w == nil then return nil end")
+            line(if (transform != null) "return __fn(__v, __w)" else "return {first = __v, second = __w}")
+        },
+    )
+
+    private fun emitSequenceZipWithNextExpr(upstream: Expression, transform: Expression?): String = emitSequenceExpr(
+        setup = {
+            emitSequenceUpstream(upstream)
+            if (transform != null) line("local __fn = ${callbackStr(transform)}")
+            line("local __prev = __it()")
+        },
+        produce = {
+            line("local __v = __it()")
+            line("if __prev == nil or __v == nil then return nil end")
+            line("local __p = __prev")
+            line("__prev = __v")
+            line(if (transform != null) "return __fn(__p, __v)" else "return {first = __p, second = __v}")
+        },
+    )
+
+    /** windowed(size, step, partialWindows[, transform]) and chunked(size[, transform]) (= windowed(size, size, true)). */
+    private fun emitSequenceWindowedExpr(expr: MethodCallExpr): String {
+        val chunked = expr.methodName == "chunked"
+        val transform = expr.args.lastOrNull()?.toExpression()?.takeIf { it is LambdaExpr }
+        val plain = if (transform != null) expr.args.dropLast(1) else expr.args
+        val size = resolveNamedOrPositional(plain, "size", 0)!!
+        val step = if (chunked) size else resolveNamedOrPositional(plain, "step", 1)
+        val partial = if (chunked) null else resolveNamedOrPositional(plain, "partialWindows", 2)
+        return emitSequenceExpr(
+            setup = {
+                emitSequenceUpstream(expr.obj)
+                line("local __size = ${emitExpression(size)}")
+                line("local __step = ${step?.let { emitExpression(it) } ?: "1"}")
+                line("local __partial = ${if (chunked) "true" else partial?.let { emitExpression(it) } ?: "false"}")
+                if (transform != null) line("local __fn = ${callbackStr(transform, "List")}")
+                line("local __w = {}")
+                line("local __started = false")
+                line("local __finished = false")
+            },
+            produce = {
+                line("if __finished then return nil end")
+                line("if __started then")
+                pushIndent()
+                line("local __drop = math.min(__step, #__w)")
+                line("for __k = 1, __drop do table.remove(__w, 1) end")
+                line("for __k = 1, __step - __drop do __it() end")
+                popIndent()
+                line("end")
+                line("__started = true")
+                line("while #__w < __size do local __v = __it(); if __v == nil then break end; __w[#__w + 1] = __v end")
+                line("if #__w == 0 then __finished = true; return nil end")
+                line("if #__w < __size then __finished = true; if not __partial then return nil end end")
+                line("local __out = {}")
+                line("for __k = 1, #__w do __out[__k] = __w[__k] end")
+                line(if (transform != null) "return __fn(__out)" else "return __out")
+            },
+        )
+    }
+
+    /** What to append (plus) or remove (minus): a Sequence, a List/Set, or a single element. */
+    private fun extraIsCollection(arg: Expression): String? = receiverInstanceClass(arg)?.takeIf { it in setOf("Sequence", "List", "Set") }
+
+    private fun emitSequencePlusExpr(upstream: Expression, arg: Expression, element: Boolean): String = emitSequenceExpr(
+        setup = {
+            emitSequenceUpstream(upstream)
+            val kind = if (element) null else extraIsCollection(arg)
+            when (kind) {
+                "Sequence" -> line("local __ex = (${emitExpression(arg)})()")
+                null -> {
+                    line("local __e = ${emitExpression(arg)}")
+                    line("local __d = false")
+                    line("local __ex = function() if __d then return nil end __d = true; return __e end")
+                }
+                else -> {
+                    line("local __a = ${iterationArrayOf(arg)}")
+                    line("local __i = 0")
+                    line("local __ex = function() __i = __i + 1; return __a[__i] end")
+                }
+            }
+            line("local __first = true")
+        },
+        produce = {
+            line("if __first then")
+            pushIndent()
+            line("local __v = __it()")
+            line("if __v ~= nil then return __v end")
+            line("__first = false")
+            popIndent()
+            line("end")
+            line("return __ex()")
+        },
+    )
+
+    private fun emitSequenceMinusExpr(upstream: Expression, arg: Expression, element: Boolean): String = emitSequenceExpr(
+        setup = {
+            emitSequenceUpstream(upstream)
+            val kind = if (element) null else extraIsCollection(arg)
+            if (kind == null) {
+                line("local __e = ${emitExpression(arg)}")
+                line("local __removed = false")
+            } else {
+                line("local __ex = {}")
+                if (kind == "Sequence") line("for __x in (${emitExpression(arg)})() do __ex[__x] = true end")
+                else line("for _, __x in ipairs(${iterationArrayOf(arg)}) do __ex[__x] = true end")
+            }
+        },
+        produce = {
+            val kind = if (element) null else extraIsCollection(arg)
+            line("while true do")
+            pushIndent()
+            line("local __v = __it()")
+            line("if __v == nil then return nil end")
+            if (kind == null) {
+                line("if not __removed and __v == __e then __removed = true else return __v end")
+            } else {
+                line("if not __ex[__v] then return __v end")
+            }
+            popIndent()
+            line("end")
+        },
+    )
+
+    /** runningFold / scan (initial value first) and runningReduce (first element first), with or without the index. */
+    private fun emitSequenceRunningExpr(upstream: Expression, fold: Boolean, indexed: Boolean, initial: Expression?, callback: Expression): String = emitSequenceExpr(
+        setup = {
+            emitSequenceUpstream(upstream)
+            line("local __fn = ${callbackStr(callback)}")
+            line("local __acc = ${initial?.let { emitExpression(it) } ?: "nil"}")
+            if (fold) line("local __started = false")
+            line("local __idx = ${if (fold) "-1" else "0"}")
+        },
+        produce = {
+            if (fold) {
+                line("if not __started then __started = true; return __acc end")
+            } else {
+                line("if __acc == nil then local __f = __it(); __acc = __f; return __f end")
+            }
+            line("local __v = __it()")
+            line("if __v == nil then return nil end")
+            line("__idx = __idx + 1")
+            line("__acc = __fn(${if (indexed) "__idx, " else ""}__acc, __v)")
+            line("return __acc")
+        },
+    )
+
+    private fun emitSequenceIfEmptyExpr(upstream: Expression, fallback: Expression): String = emitSequenceExpr(
+        setup = {
+            emitSequenceUpstream(upstream)
+            line("local __head = __it()")
+            line("if __head == nil then __it = (${callbackStr(fallback)}())(); __head = __it() end")
+            line("local __started = false")
+        },
+        produce = {
+            line("if not __started then __started = true; return __head end")
+            line("return __it()")
+        },
+    )
+
+    /** `sequence { yield(1); yieldAll(xs) }`: the body runs as a Lua coroutine and each yield hands one element out. */
+    private fun emitSequenceBuilderExpr(body: LambdaExpr): String = emitSequenceExpr(
+        setup = {
+            line("local __co = coroutine.wrap(${emitLambda(body, noParams = true)})")
+            line("local __done = false")
+        },
+        produce = {
+            line("if __done then return nil end")
+            line("local __v = __co()")
+            line("if __v == nil then __done = true end")
+            line("return __v")
+        },
+    )
+
+    private fun emitGenerateSequenceNoSeedExpr(next: Expression): String = emitSequenceExpr(
+        setup = { line("local __fn = ${callbackStr(next)}"); line("local __done = false") },
+        produce = {
+            line("if __done then return nil end")
+            line("local __v = __fn()")
+            line("if __v == nil then __done = true end")
+            line("return __v")
         },
     )
 
@@ -1692,6 +1997,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             "in" -> inRangeOrContains(expr, leftStr, rightStr)
             "!in" -> "(not ${inRangeOrContains(expr, leftStr, rightStr)})"
             "+" -> when (receiverInstanceClass(expr.left)) {
+                "Sequence" -> emitSequencePlusExpr(expr.left, expr.right, element = false)
                 "List" -> emitListPlusExpr(leftStr, expr.right, rightStr)
                 "Set" -> emitSetPlusMinusExpr(leftStr, expr.right, rightStr, removing = false)
                 else -> if (types.inferExprType(expr.left) == TypeName.CHAR) {
@@ -1703,6 +2009,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                 }
             }
             "-" -> when (receiverInstanceClass(expr.left)) {
+                "Sequence" -> emitSequenceMinusExpr(expr.left, expr.right, element = false)
                 "List" -> emitListMinusExpr(leftStr, expr.right, rightStr)
                 "Set" -> emitSetPlusMinusExpr(leftStr, expr.right, rightStr, removing = true)
                 else -> if (types.inferExprType(expr.left) != TypeName.CHAR) "($leftStr - $rightStr)"
@@ -1779,8 +2086,27 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         if (expr.callee == "sequenceOf") {
             return emitSequenceOfExpr(expr.args)
         }
+        if (expr.callee == "generateSequence" && expr.args.size == 1 && types.functionParamNames("generateSequence") == null) {
+            return emitGenerateSequenceNoSeedExpr(expr.args[0].toExpression())
+        }
         if (expr.callee == "generateSequence" && expr.args.size == 2) {
-            return emitGenerateSequenceExpr(expr.args[0].toExpression(), expr.args[1].toExpression())
+            val first = expr.args[0].toExpression()
+            val seed = if (first is LambdaExpr) first.copy(params = emptyList()).let { MethodCallExpr(it, "invoke", emptyList()) } else first
+            return emitGenerateSequenceExpr(seed, expr.args[1].toExpression())
+        }
+        if (expr.callee == "emptySequence" && expr.args.isEmpty() && types.functionParamNames("emptySequence") == null) {
+            return "function() return function() return nil end end"
+        }
+        if (expr.callee == "sequence" && expr.args.size == 1 && types.functionParamNames("sequence") == null) {
+            (expr.args[0].toExpression() as? LambdaExpr)?.let { return emitSequenceBuilderExpr(it) }
+        }
+        if (expr.callee == "yield" && expr.args.size == 1 && types.functionParamNames("yield") == null) {
+            return "coroutine.yield(${emitExpression(expr.args[0].toExpression())})"
+        }
+        if (expr.callee == "yieldAll" && expr.args.size == 1 && types.functionParamNames("yieldAll") == null) {
+            val arg = expr.args[0].toExpression()
+            return if (receiverInstanceClass(arg) == "Sequence") "(function() for __y in (${emitExpression(arg)})() do coroutine.yield(__y) end end)()"
+            else "(function() for _, __y in ipairs(${iterationArrayOf(arg)}) do coroutine.yield(__y) end end)()"
         }
         if (expr.callee == "with" && expr.args.size == 2) {
             val receiver = expr.args[0].toExpression()
