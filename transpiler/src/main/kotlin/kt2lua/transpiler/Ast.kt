@@ -157,6 +157,9 @@ data class BooleanLiteral(val value: Boolean) : Expression()
 
 /** `'a'`: a Char is a one-character Lua string, so it prints, compares and concatenates like one. */
 data class CharLiteral(val value: Char) : Expression()
+
+/** `x is T` / `x !is T` in an expression (a `when` branch has its own [IsTypeCondition]). */
+data class IsExpr(val expr: Expression, val typeName: String, val negated: Boolean) : Expression()
 object NullLiteral : Expression()
 data class StringTemplateLiteral(val parts: List<TemplateExprPart>) : Expression()
 
@@ -171,7 +174,7 @@ data class UnaryExpr(val op: String, val expr: Expression) : Expression()
 data class CallExpr(val callee: String, val args: List<CallArg>) : Expression()
 data class PropertyAccessExpr(val obj: Expression, val name: String) : Expression()
 /** Always compiles to a plain Lua dot-call, never a colon/self-passing call. */
-data class MethodCallExpr(val obj: Expression, val methodName: String, val args: List<CallArg>) : Expression()
+data class MethodCallExpr(val obj: Expression, val methodName: String, val args: List<CallArg>, val typeArgs: List<String> = emptyList()) : Expression()
 /** `::name` — Lua functions already are values, so this just emits the bare name. */
 data class FunctionRef(val name: String) : Expression()
 data class IfExpr(val cond: Expression, val thenExpr: Expression, val elseExpr: Expression) : Expression()
@@ -182,7 +185,7 @@ data class ParenExpr(val expr: Expression) : Expression()
  * in `a?.b.c`), which does *not* get a runtime nil guard. */
 sealed class ChainStep
 data class ChainProp(val name: String, val safe: Boolean) : ChainStep()
-data class ChainCall(val name: String, val args: List<CallArg>, val safe: Boolean) : ChainStep()
+data class ChainCall(val name: String, val args: List<CallArg>, val safe: Boolean, val typeArgs: List<String> = emptyList()) : ChainStep()
 
 /** Any `.`/`?.` chain containing at least one `?.`; a chain with none compiles to plain nested
  * [PropertyAccessExpr]/[MethodCallExpr] instead. Compiles to an IIFE that walks the chain one

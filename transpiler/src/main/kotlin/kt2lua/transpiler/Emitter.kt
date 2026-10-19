@@ -115,13 +115,31 @@ private fun quoteLuaString(text: String, style: QuoteStyle): String {
     return "$quote${escapeLuaString(text, quote)}$quote"
 }
 
-private val SEQUENCE_CHAIN_METHODS = setOf(
+/** Sequence operations that need every element anyway, so they run on the materialized list. */
+private val SEQUENCE_VIA_LIST = setOf("joinToString", "partition", "groupBy", "associate", "associateBy", "associateWith", "sumOf", "forEachIndexed")
+
+/** Same, but the result is a Sequence again (sorted() and friends consume everything before producing anything). */
+internal val SEQUENCE_VIA_LIST_THEN_SEQUENCE = setOf("sorted", "sortedBy", "sortedByDescending", "sortedDescending", "sortedWith")
+
+/** Sequence operations that write their results into a destination collection and return it. */
+private val SEQUENCE_TO_NAMES = setOf(
+    "filterTo", "filterNotTo", "filterIndexedTo", "filterIsInstanceTo", "filterNotNullTo", "mapTo", "mapIndexedTo",
+    "mapNotNullTo", "mapIndexedNotNullTo", "flatMapTo", "flatMapIndexedTo", "groupByTo", "associateTo", "associateByTo", "associateWithTo",
+)
+
+private val SEQUENCE_EXTREME_NAMES = setOf(
+    "min", "max", "minOrNull", "maxOrNull", "minBy", "maxBy", "minByOrNull", "maxByOrNull",
+    "minOf", "maxOf", "minOfOrNull", "maxOfOrNull", "minWith", "maxWith", "minWithOrNull", "maxWithOrNull",
+    "minOfWith", "maxOfWith", "minOfWithOrNull", "maxOfWithOrNull",
+)
+
+internal val SEQUENCE_CHAIN_METHODS = setOf(
     "map", "filter", "take", "drop", "takeWhile", "dropWhile", "onEach", "mapNotNull", "filterNotNull", "distinct",
     "filterNot", "mapIndexed", "mapIndexedNotNull", "filterIndexed", "onEachIndexed", "withIndex", "flatMap", "flatMapIndexed",
     "flatten", "zip", "zipWithNext", "windowed", "chunked", "plus", "minus", "plusElement", "minusElement",
     "runningFold", "runningFoldIndexed", "scan", "scanIndexed", "runningReduce", "runningReduceIndexed",
-    "distinctBy", "requireNoNulls", "constrainOnce", "orEmpty", "ifEmpty",
-)
+    "distinctBy", "requireNoNulls", "constrainOnce", "orEmpty", "ifEmpty", "filterIsInstance",
+) + SEQUENCE_VIA_LIST_THEN_SEQUENCE + setOf("shuffled")
 
 class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bindings: LuaBindings = LuaBindings()) : EmitContext, CollectionLoweringContext {
     override fun emitSubscriptions(decl: ClassDecl) = kt2lua.transpiler.emitter.SubscriptionEmitter.emit(decl, this, bindings)
@@ -201,8 +219,15 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private fun collectionMethodResultKind(receiverClass: String, expr: MethodCallExpr): String? = when {
         expr.methodName == "asSequence" || expr.methodName == "asStream" -> "Sequence"
         receiverClass == "Sequence" && expr.methodName in SEQUENCE_CHAIN_METHODS -> "Sequence"
-        receiverClass == "Sequence" && expr.methodName in setOf("toList", "toMutableList") -> "List"
-        receiverClass == "Sequence" && expr.methodName == "toSet" -> "Set"
+        receiverClass == "Sequence" && expr.methodName in setOf("toList", "toMutableList", "asIterable") -> "List"
+        receiverClass == "Sequence" && expr.methodName in setOf("toSet", "toMutableSet", "toHashSet", "toSortedSet") -> "Set"
+        receiverClass == "Sequence" && expr.methodName == "unzip" -> "Pair"
+        expr.methodName == "groupingBy" && receiverClass in setOf("Sequence", "List", "Set") -> "Grouping"
+        expr.methodName == "filterIsInstance" && receiverClass in setOf("List", "Set") -> "List"
+        expr.methodName == "joinTo" && receiverClass in setOf("Sequence", "List", "Set") -> expr.args.firstOrNull()?.toExpression()?.let { receiverInstanceClass(it) }
+        receiverClass == "Sequence" && expr.methodName in SEQUENCE_TO_NAMES -> expr.args.firstOrNull()?.toExpression()?.let { receiverInstanceClass(it) }
+        receiverClass == "Sequence" && expr.methodName in SEQUENCE_VIA_LIST ->
+            operationRegistry.resolve("List", expr.methodName, OperationCall(expr.obj, expr.args), this)?.resultKind("List")
         expr.methodName == "onEach" -> receiverClass
         else -> operationRegistry.resolve(receiverClass, expr.methodName, OperationCall(expr.obj, expr.args), this)?.resultKind(receiverClass)
     }
@@ -214,8 +239,21 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         types.registerExternalClass("List", ClassInfo(emptyList(), emptySet(), false, propertyTypes = mapOf("size" to "Int"), native = true))
         types.registerExternalClass("Set", ClassInfo(emptyList(), emptySet(), false, propertyTypes = mapOf("size" to "Int"), native = true))
         types.registerExternalClass("Map", ClassInfo(emptyList(), emptySet(), false, propertyTypes = mapOf("size" to "Int"), native = true))
-        types.registerExternalClass("Sequence", ClassInfo(emptyList(), emptySet(), false, native = true))
+        types.registerExternalClass(
+            "Sequence",
+            ClassInfo(emptyList(), emptySet(), false, methodReturnTypes = mapOf("average" to "Double", "sumByDouble" to "Double", "sumBy" to "Int"), native = true),
+        )
         types.registerExternalClass("Pair", ClassInfo(emptyList(), emptySet(), false, native = true))
+        types.registerExternalClass("Grouping", ClassInfo(emptyList(), emptySet(), false, native = true))
+        types.registerExternalClass(
+            "StringBuilder",
+            ClassInfo(
+                emptyList(), setOf("append", "appendLine", "isEmpty", "isNotEmpty", "clear"), false,
+                propertyTypes = mapOf("length" to "Int"),
+                methodReturnTypes = mapOf("append" to "StringBuilder", "appendLine" to "StringBuilder", "clear" to "StringBuilder"),
+                native = true,
+            ),
+        )
         types.registerExternalClass(
             "FloatRange",
             ClassInfo(emptyList(), emptySet(), false, propertyTypes = mapOf("start" to "Double", "endInclusive" to "Double"), native = true),
@@ -290,6 +328,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private fun lengthAccess(receiverStr: String, className: String?): String = when (className) {
         "Set" -> "#$receiverStr.list"
         "Map" -> "#$receiverStr.keys"
+        "StringBuilder" -> "#table.concat($receiverStr.buf)"
         else -> "#$receiverStr"
     }
 
@@ -446,7 +485,23 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
 
     private val NUMERIC_CAST_NAMES = setOf("toDouble", "toInt", "toFloat", "toLong", "toShort", "toByte")
 
+    private fun emitStringBuilderCall(expr: MethodCallExpr): String? {
+        val sb = emitExpression(expr.obj)
+        val a = expr.args.map { it.toExpression() }
+        fun appended(value: String) = "(function(b) table.insert(b.buf, $value) return b end)($sb)"
+        return when {
+            expr.methodName == "append" && a.size == 1 -> appended(formatForToString(a[0], emitExpression(a[0])))
+            expr.methodName == "appendLine" && a.isEmpty() -> appended("\"\\n\"")
+            expr.methodName == "appendLine" && a.size == 1 -> appended("${formatForToString(a[0], emitExpression(a[0]))} .. \"\\n\"")
+            expr.methodName == "isEmpty" && a.isEmpty() -> "(#table.concat($sb.buf) == 0)"
+            expr.methodName == "isNotEmpty" && a.isEmpty() -> "(#table.concat($sb.buf) ~= 0)"
+            expr.methodName == "clear" && a.isEmpty() -> "(function(b) b.buf = {} return b end)($sb)"
+            else -> null
+        }
+    }
+
     private fun emitMethodCallTarget(expr: MethodCallExpr): String {
+        if (receiverInstanceClass(expr.obj) == "StringBuilder") emitStringBuilderCall(expr)?.let { return it }
         asRange(expr)?.let { return emitRangeExpr(it) }
         if (expr.methodName == "contains" && expr.args.size == 1 && receiverInstanceClass(expr.obj) == "FloatRange") {
             return emitContains(expr.obj, emitExpression(expr.obj), emitExpression(expr.args[0].toExpression()))
@@ -576,9 +631,26 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             // either way is the identity.
             return emitExpression(expr.obj)
         }
+        if (collClass in setOf("List", "Set") && expr.methodName == "filterIsInstance" && expr.typeArgs.isNotEmpty()) {
+            return emitExpression(MethodCallExpr(MethodCallExpr(MethodCallExpr(expr.obj, "asSequence", emptyList()), "filterIsInstance", expr.args, expr.typeArgs), "toList", emptyList()))
+        }
+        if (collClass in setOf("List", "Set") && expr.methodName == "joinTo" && expr.args.isNotEmpty()) {
+            return emitExpression(MethodCallExpr(MethodCallExpr(expr.obj, "asSequence", emptyList()), "joinTo", expr.args))
+        }
+        if (collClass in setOf("List", "Set") && expr.methodName == "groupingBy" && expr.args.size == 1) {
+            return emitExpression(MethodCallExpr(MethodCallExpr(expr.obj, "asSequence", emptyList()), "groupingBy", expr.args))
+        }
+        if (receiverInstanceClass(expr.obj) == "Grouping") emitGroupingCall(expr)?.let { return it }
+        if (collClass == "Sequence" && expr.methodName in SEQUENCE_VIA_LIST) {
+            return emitExpression(MethodCallExpr(MethodCallExpr(expr.obj, "toList", emptyList()), expr.methodName, expr.args))
+        }
+        if (collClass == "Sequence" && expr.methodName in SEQUENCE_VIA_LIST_THEN_SEQUENCE) {
+            return emitExpression(MethodCallExpr(MethodCallExpr(MethodCallExpr(expr.obj, "toList", emptyList()), expr.methodName, expr.args), "asSequence", emptyList()))
+        }
         if (collClass == "Sequence") {
             val seqStr = emitExpression(expr.obj)
             val arg0 = expr.args.getOrNull(0)?.toExpression()
+            emitSequenceEager(expr, seqStr)?.let { return it }
             when {
                 expr.methodName == "map" && arg0 != null -> return emitSequenceMapExpr(expr.obj, arg0)
                 expr.methodName == "filter" && arg0 != null -> return emitSequenceFilterExpr(expr.obj, arg0)
@@ -591,6 +663,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                 expr.methodName == "dropWhile" && arg0 != null -> return emitSequenceDropWhileExpr(expr.obj, arg0)
                 expr.methodName == "distinct" && expr.args.isEmpty() -> return emitSequenceDistinctExpr(expr.obj)
                 expr.methodName == "distinctBy" && arg0 != null -> return emitSequenceDistinctByExpr(expr.obj, arg0)
+                expr.methodName == "filterIsInstance" && expr.typeArgs.isNotEmpty() ->
+                    return emitSequenceFilterExpr(expr.obj, null, predicateLua = instancePredicate(expr.typeArgs[0]))
+                expr.methodName == "groupingBy" && arg0 != null -> return emitSequenceGroupingBy(expr.obj, arg0)
+                expr.methodName in SEQUENCE_TO_NAMES && expr.args.isNotEmpty() -> return emitSequenceToVariant(expr, seqStr)
                 expr.methodName == "filterNot" && arg0 != null -> return emitSequenceFilterExpr(expr.obj, arg0, negate = true)
                 expr.methodName in setOf("mapIndexed", "mapIndexedNotNull", "filterIndexed", "onEachIndexed") && arg0 != null ->
                     return emitSequenceIndexedExpr(expr.methodName, expr.obj, arg0)
@@ -612,8 +688,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                 expr.methodName == "runningReduceIndexed" && arg0 != null -> return emitSequenceRunningExpr(expr.obj, fold = false, indexed = true, null, arg0)
                 expr.methodName in setOf("requireNoNulls", "constrainOnce", "orEmpty") && expr.args.isEmpty() -> return seqStr
                 expr.methodName == "ifEmpty" && arg0 != null -> return emitSequenceIfEmptyExpr(expr.obj, arg0)
-                expr.methodName == "first" && expr.args.isEmpty() -> return "(($seqStr)())()"
-                expr.methodName == "firstOrNull" && expr.args.isEmpty() -> return "(($seqStr)())()"
+                expr.methodName == "first" && expr.args.isEmpty() -> return "__nilDecode((($seqStr)())())"
+                expr.methodName == "firstOrNull" && expr.args.isEmpty() -> return "__nilDecode((($seqStr)())())"
                 expr.methodName in setOf("find", "first", "firstOrNull") && arg0 != null ->
                     return emitSequenceTerminalExpr { emitSequenceFindStatements(it, seqStr, arg0) }
                 expr.methodName in setOf("toList", "toMutableList") && expr.args.isEmpty() ->
@@ -622,6 +698,11 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                     return emitSequenceTerminalExpr { emitSequenceToSetStatements(it, seqStr) }
                 expr.methodName == "count" && expr.args.isEmpty() ->
                     return emitSequenceTerminalExpr { emitSequenceCountStatements(it, seqStr) }
+                expr.methodName == "count" && arg0 != null -> return emitSequenceTerminalExpr { r ->
+                    line("local $r = 0")
+                    line("local __fn = ${callbackStrFor(arg0, expr.obj)}")
+                    line("for __v in ($seqStr)() do if __fn(__nilDecode(__v)) then $r = $r + 1 end end")
+                }
                 expr.methodName == "sum" && expr.args.isEmpty() ->
                     return emitSequenceTerminalExpr { emitSequenceSumStatements(it, seqStr) }
                 expr.methodName in setOf("any", "all", "none") && arg0 != null ->
@@ -773,6 +854,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             }
             line("local $name = $valueStr")
             types.env.declare(name, TypeName.ANY)
+            if (fieldOrder == null && (stmt.init as? MethodCallExpr)?.methodName in setOf("unzip", "partition")) types.declareInstance(name, "List")
         }
     }
 
@@ -846,7 +928,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             if (expr.methodName == "new" && expressionPath(expr.obj)?.let { nativeFactory(it) } != null) {
                 bindings.type(expressionPath(expr.obj)!!)
             } else receiverInstanceClass(expr.obj)?.let { receiverClass ->
-                if (receiverClass == "Random") types.methodReturnClass("Random", expr.methodName)
+                if (receiverClass == "Grouping") "Map"
+                else if (receiverClass == "Random" || receiverClass == "StringBuilder") types.methodReturnClass(receiverClass, expr.methodName)
                 else if (receiverClass == RESULT_CLASS && expr.methodName in setOf("onSuccess", "onFailure")) RESULT_CLASS
                 else if (receiverClass in setOf("List", "Set", "Map", "Sequence")) collectionMethodResultKind(receiverClass, expr)
                 else if (types.classInfo(receiverClass)?.native == true) bindings.method(receiverClass, expr.methodName)?.second
@@ -1001,7 +1084,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         is BinaryExpr -> emitBinary(expr)
         is CallExpr -> emitCall(expr)
         is PropertyAccessExpr -> receiverInstanceClass(expr.obj).let { cls ->
-            if (isLengthProperty(expr.name) && (cls == null || cls in setOf("String", "List", "Set", "Map"))) lengthAccess(emitExpression(expr.obj), cls)
+            if (isLengthProperty(expr.name) && (cls == null || cls in setOf("String", "List", "Set", "Map", "StringBuilder"))) lengthAccess(emitExpression(expr.obj), cls)
             else emitPropertyAccess(expr.obj, expr.name)
         }
         is MethodCallExpr -> emitMethodCallTarget(expr)
@@ -1016,6 +1099,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         is IndexExpr -> emitIndex(expr)
         is ToPairExpr -> "{first = ${emitExpression(expr.first)}, second = ${emitExpression(expr.second)}}"
         is RangeExpr -> emitRangeExpr(expr)
+        is IsExpr -> {
+            val check = "(${instancePredicate(expr.typeName)})(${emitExpression(expr.expr)})"
+            if (expr.negated) "(not $check)" else check
+        }
     }
 
     private fun emitPropertyAccess(receiver: Expression, name: String): String {
@@ -1200,6 +1287,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         "Map" -> "($collStr.map[${valueExpr?.let { canonicalKeyStr(it, valueStr) } ?: valueStr}] ~= nil)"
         "String" -> "(string.find($collStr, $valueStr, 1, true) ~= nil)"
         "FloatRange" -> "(function(v, r) return v >= r.start and v <= r.endInclusive end)($valueStr, $collStr)"
+        "Sequence" -> "(function(x) for __v in ($collStr)() do if __nilDecode(__v) == x then return true end end return false end)($valueStr)"
         "List" -> {
             useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
             val encodedValue = "__nilEncode($valueStr)"
@@ -1296,6 +1384,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     }
 
     private fun emitSequenceExpr(setup: () -> Unit, produce: () -> Unit): String {
+        useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
         val savedOut = out
         val savedIndent = indentLevel
         out = StringBuilder()
@@ -1319,7 +1408,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
 
     private fun emitSequenceOfExpr(args: List<CallArg>): String = emitSequenceExpr(
         setup = {
-            line("local __arr = {${args.joinToString(", ") { emitExpression(it.toExpression()) }}}")
+            line("local __arr = {${args.joinToString(", ") { "__nilEncode(${emitExpression(it.toExpression())})" }}}")
             line("local __i = 0")
         },
         produce = { line("__i = __i + 1"); line("return __arr[__i]") },
@@ -1349,21 +1438,21 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         produce = {
             line("local __v = __it()")
             line("if __v == nil then return nil end")
-            line("return __fn(__v)")
+            line("return __nilEncode(__fn(__nilDecode(__v)))")
         },
     )
 
-    private fun emitSequenceFilterExpr(upstream: Expression, callback: Expression, negate: Boolean = false): String = emitSequenceExpr(
+    private fun emitSequenceFilterExpr(upstream: Expression, callback: Expression?, negate: Boolean = false, predicateLua: String? = null): String = emitSequenceExpr(
         setup = {
             emitSequenceUpstream(upstream)
-            line("local __fn = ${callbackStrFor(callback, upstream)}")
+            line("local __fn = ${predicateLua ?: callbackStrFor(callback!!, upstream)}")
         },
         produce = {
             line("while true do")
             pushIndent()
             line("local __v = __it()")
             line("if __v == nil then return nil end")
-            line(if (negate) "if not __fn(__v) then return __v end" else "if __fn(__v) then return __v end")
+            line(if (negate) "if not __fn(__nilDecode(__v)) then return __v end" else "if __fn(__nilDecode(__v)) then return __v end")
             popIndent()
             line("end")
         },
@@ -1379,7 +1468,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             pushIndent()
             line("local __v = __it()")
             line("if __v == nil then return nil end")
-            line("local __r = __fn(__v)")
+            line("local __r = __fn(__nilDecode(__v))")
             line("if __r ~= nil then return __r end")
             popIndent()
             line("end")
@@ -1388,7 +1477,15 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
 
     private fun emitSequenceFilterNotNullExpr(upstream: Expression): String = emitSequenceExpr(
         setup = { emitSequenceUpstream(upstream) },
-        produce = { line("return __it()") },
+        produce = {
+            line("while true do")
+            pushIndent()
+            line("local __v = __it()")
+            line("if __v == nil then return nil end")
+            line("if __v ~= __NULL then return __v end")
+            popIndent()
+            line("end")
+        },
     )
 
     private fun emitSequenceOnEachExpr(upstream: Expression, callback: Expression): String = emitSequenceExpr(
@@ -1399,7 +1496,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         produce = {
             line("local __v = __it()")
             line("if __v == nil then return nil end")
-            line("__fn(__v)")
+            line("__fn(__nilDecode(__v))")
             line("return __v")
         },
     )
@@ -1435,7 +1532,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         produce = {
             line("if __done then return nil end")
             line("local __v = __it()")
-            line("if __v == nil or not __fn(__v) then __done = true; return nil end")
+            line("if __v == nil or not __fn(__nilDecode(__v)) then __done = true; return nil end")
             line("return __v")
         },
     )
@@ -1452,7 +1549,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             line("local __v = __it()")
             line("if __v == nil then return nil end")
             line("if not __dropping then return __v end")
-            line("if not __fn(__v) then __dropping = false; return __v end")
+            line("if not __fn(__nilDecode(__v)) then __dropping = false; return __v end")
             popIndent()
             line("end")
         },
@@ -1465,7 +1562,9 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             pushIndent()
             line("local __v = __it()")
             line("if __v == nil then return nil end")
-            line("if not __seen[__v] then __seen[__v] = true; return __v end")
+            line("local __k = __v")
+            line("if type(__k) == \"table\" then local __m = getmetatable(__k); if __m and __m.__data then __k = tostring(__k) end end")
+            line("if not __seen[__k] then __seen[__k] = true; return __v end")
             popIndent()
             line("end")
         },
@@ -1494,7 +1593,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             pushIndent()
             line("local __v = __it()")
             line("if __v == nil then return nil end")
-            line("local __k = __fn(__v)")
+            line("local __k = __nilEncode(__fn(__nilDecode(__v)))")
+            line("if type(__k) == \"table\" then local __m = getmetatable(__k); if __m and __m.__data then __k = tostring(__k) end end")
             line("if not __seen[__k] then __seen[__k] = true; return __v end")
             popIndent()
             line("end")
@@ -1515,11 +1615,11 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             line("if __v == nil then return nil end")
             line("__idx = __idx + 1")
             when (kind) {
-                "mapIndexed" -> line("return __fn(__idx, __v)")
-                "mapIndexedNotNull" -> line("local __r = __fn(__idx, __v); if __r ~= nil then return __r end")
-                "filterIndexed" -> line("if __fn(__idx, __v) then return __v end")
-                "onEachIndexed" -> line("__fn(__idx, __v); return __v")
-                else -> line("return {index = __idx, value = __v, first = __idx, second = __v}")
+                "mapIndexed" -> line("return __nilEncode(__fn(__idx, __nilDecode(__v)))")
+                "mapIndexedNotNull" -> line("local __r = __fn(__idx, __nilDecode(__v)); if __r ~= nil then return __r end")
+                "filterIndexed" -> line("if __fn(__idx, __nilDecode(__v)) then return __v end")
+                "onEachIndexed" -> line("__fn(__idx, __nilDecode(__v)); return __v")
+                else -> line("return {index = __idx, value = __nilDecode(__v), first = __idx, second = __nilDecode(__v)}")
             }
             popIndent()
             line("end")
@@ -1549,8 +1649,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             if (indexed) line("__idx = __idx + 1")
             line("local __r = " + when {
                 callback == null -> "__v"
-                indexed -> "__fn(__idx, __v)"
-                else -> "__fn(__v)"
+                indexed -> "__fn(__idx, __nilDecode(__v))"
+                else -> "__fn(__nilDecode(__v))"
             })
             line("if type(__r) == \"function\" then __inner = __r() else local __a = __r.list or __r; local __i = 0; __inner = function() __i = __i + 1; return __a[__i] end end")
             popIndent()
@@ -1569,7 +1669,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             line("if __v == nil then return nil end")
             line("local __w = __it2()")
             line("if __w == nil then return nil end")
-            line(if (transform != null) "return __fn(__v, __w)" else "return {first = __v, second = __w}")
+            line(if (transform != null) "return __nilEncode(__fn(__nilDecode(__v), __nilDecode(__w)))" else "return {first = __nilDecode(__v), second = __nilDecode(__w)}")
         },
     )
 
@@ -1584,7 +1684,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             line("if __prev == nil or __v == nil then return nil end")
             line("local __p = __prev")
             line("__prev = __v")
-            line(if (transform != null) "return __fn(__p, __v)" else "return {first = __p, second = __v}")
+            line(if (transform != null) "return __nilEncode(__fn(__nilDecode(__p), __nilDecode(__v)))" else "return {first = __nilDecode(__p), second = __nilDecode(__v)}")
         },
     )
 
@@ -1622,7 +1722,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                 line("if #__w < __size then __finished = true; if not __partial then return nil end end")
                 line("local __out = {}")
                 line("for __k = 1, #__w do __out[__k] = __w[__k] end")
-                line(if (transform != null) "return __fn(__out)" else "return __out")
+                line(if (transform != null) "return __nilEncode(__fn(__out))" else "return __out")
             },
         )
     }
@@ -1637,7 +1737,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             when (kind) {
                 "Sequence" -> line("local __ex = (${emitExpression(arg)})()")
                 null -> {
-                    line("local __e = ${emitExpression(arg)}")
+                    line("local __e = __nilEncode(${emitExpression(arg)})")
                     line("local __d = false")
                     line("local __ex = function() if __d then return nil end __d = true; return __e end")
                 }
@@ -1666,7 +1766,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             emitSequenceUpstream(upstream)
             val kind = if (element) null else extraIsCollection(arg)
             if (kind == null) {
-                line("local __e = ${emitExpression(arg)}")
+                line("local __e = __nilEncode(${emitExpression(arg)})")
                 line("local __removed = false")
             } else {
                 line("local __ex = {}")
@@ -1708,7 +1808,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             line("local __v = __it()")
             line("if __v == nil then return nil end")
             line("__idx = __idx + 1")
-            line("__acc = __fn(${if (indexed) "__idx, " else ""}__acc, __v)")
+            line("__acc = __fn(${if (indexed) "__idx, " else ""}__acc, __nilDecode(__v))")
             line("return __acc")
         },
     )
@@ -1750,6 +1850,299 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         },
     )
 
+    /** An element-by-element loop over [seqStr] whose body comes from [body], with `__fn` bound to [callback] first. */
+    private fun sequenceLoop(seqStr: String, callback: Expression?, upstream: Expression, body: () -> Unit) {
+        if (callback != null) line("local __fn = ${callbackStrFor(callback, upstream)}")
+        line("for __raw in ($seqStr)() do")
+        pushIndent()
+        line("local __v = __nilDecode(__raw)")
+        body()
+        popIndent()
+        line("end")
+    }
+
+    private fun emitSequenceExtreme(expr: MethodCallExpr, seqStr: String): String {
+        val name = expr.methodName
+        val isMax = name.startsWith("max")
+        val orNull = name.endsWith("OrNull")
+        val core = name.removePrefix(if (isMax) "max" else "min").removeSuffix("OrNull")
+        val args = expr.args.map { it.toExpression() }
+        val selector = when (core) { "By", "Of" -> args.getOrNull(0); "OfWith" -> args.getOrNull(1); else -> null }
+        val comparator = when (core) { "With", "OfWith" -> args.getOrNull(0); else -> null }
+        val returnsKey = core == "Of" || core == "OfWith"
+        return emitSequenceTerminalExpr { r ->
+            line("local $r, __best, __bk, __found = nil, nil, nil, false")
+            if (comparator != null) line("local __cmp = ${emitExpression(comparator)}")
+            sequenceLoop(seqStr, selector, expr.obj) {
+                line("local __k = ${if (selector != null) "__fn(__v)" else "__v"}")
+                val better = when {
+                    comparator != null -> "__cmp(__k, __bk) ${if (isMax) ">" else "<"} 0"
+                    else -> "__k ${if (isMax) ">" else "<"} __bk"
+                }
+                line("if not __found then __found = true; __best = __v; __bk = __k elseif $better then __best = __v; __bk = __k end")
+            }
+            line(if (orNull) "if __found then $r = ${if (returnsKey) "__bk" else "__best"} end"
+                else "if not __found then error(\"Sequence is empty.\", 0) end; $r = ${if (returnsKey) "__bk" else "__best"}")
+        }
+    }
+
+    /** Terminal operations that are not on List (or are better as short-circuiting loops); null when [expr] isn't one. */
+    private fun emitSequenceEager(expr: MethodCallExpr, seqStr: String): String? {
+        val m = expr.methodName
+        val a = expr.args.map { it.toExpression() }
+        val up = expr.obj
+        fun terminal(body: (String) -> Unit): String = emitSequenceTerminalExpr(body)
+        return when {
+            m in SEQUENCE_EXTREME_NAMES -> emitSequenceExtreme(expr, seqStr)
+            (m == "single" || m == "singleOrNull") && a.size <= 1 -> terminal { r ->
+                line("local $r, __n = nil, 0")
+                sequenceLoop(seqStr, a.firstOrNull(), up) {
+                    line(if (a.isEmpty()) "__n = __n + 1; $r = __v; if __n > 1 then break end"
+                        else "if __fn(__v) then __n = __n + 1; $r = __v; if __n > 1 then break end end")
+                }
+                line(if (m == "single") "if __n ~= 1 then error(__n == 0 and \"Sequence is empty.\" or \"Sequence has more than one element.\", 0) end"
+                    else "if __n ~= 1 then $r = nil end")
+            }
+            (m == "elementAt" || m == "elementAtOrNull" || m == "elementAtOrElse") && a.isNotEmpty() -> terminal { r ->
+                line("local $r, __i, __found = nil, 0, false")
+                line("local __n = ${emitExpression(a[0])}")
+                sequenceLoop(seqStr, null, up) { line("if __i == __n then $r = __v; __found = true; break end; __i = __i + 1") }
+                when (m) {
+                    "elementAt" -> line("if not __found then error(\"Sequence doesn't contain element at index \" .. tostring(__n) .. \".\", 0) end")
+                    "elementAtOrElse" -> line("if not __found then $r = (${callbackStr(a[1])})(__n) end")
+                    else -> {}
+                }
+            }
+            (m == "indexOf" || m == "lastIndexOf") && a.size == 1 -> terminal { r ->
+                line("local $r, __i = -1, 0")
+                line("local __x = ${emitExpression(a[0])}")
+                sequenceLoop(seqStr, null, up) {
+                    line("if ${structuralEq(a[0], "__v", "__x")} then $r = __i${if (m == "indexOf") "; break" else ""} end")
+                    line("__i = __i + 1")
+                }
+            }
+            (m == "indexOfFirst" || m == "indexOfLast") && a.size == 1 -> terminal { r ->
+                line("local $r, __i = -1, 0")
+                sequenceLoop(seqStr, a[0], up) {
+                    line("if __fn(__v) then $r = __i${if (m == "indexOfFirst") "; break" else ""} end")
+                    line("__i = __i + 1")
+                }
+            }
+            m == "contains" && a.size == 1 -> terminal { r ->
+                line("local $r = false")
+                line("local __x = ${emitExpression(a[0])}")
+                sequenceLoop(seqStr, null, up) { line("if ${structuralEq(a[0], "__v", "__x")} then $r = true; break end") }
+            }
+            (m == "last" || m == "lastOrNull" || m == "findLast") && a.size <= 1 -> terminal { r ->
+                line("local $r, __found = nil, false")
+                sequenceLoop(seqStr, a.firstOrNull(), up) {
+                    line(if (a.isEmpty()) "$r = __v; __found = true" else "if __fn(__v) then $r = __v; __found = true end")
+                }
+                if (m == "last") line("if not __found then error(\"Sequence is empty.\", 0) end")
+            }
+            m in setOf("reduce", "reduceOrNull", "reduceIndexed", "reduceIndexedOrNull") && a.size == 1 -> terminal { r ->
+                val indexed = m.contains("Indexed")
+                line("local $r, __found, __i = nil, false, 0")
+                sequenceLoop(seqStr, a[0], up) {
+                    line("if not __found then $r = __v; __found = true else __i = __i + 1; $r = __fn(${if (indexed) "__i, " else ""}$r, __v) end")
+                }
+                if (!m.endsWith("OrNull")) line("if not __found then error(\"Empty sequence can't be reduced.\", 0) end")
+            }
+            m == "foldIndexed" && a.size == 2 -> terminal { r ->
+                line("local $r, __i = ${emitExpression(a[0])}, -1")
+                sequenceLoop(seqStr, a[1], up) { line("__i = __i + 1; $r = __fn(__i, $r, __v)") }
+            }
+            (m == "sumBy" || m == "sumByDouble") && a.size == 1 -> terminal { r ->
+                line("local $r = 0")
+                sequenceLoop(seqStr, a[0], up) { line("$r = $r + __fn(__v)") }
+            }
+            m == "average" && a.isEmpty() -> terminal { r ->
+                line("local __s, __c = 0, 0")
+                sequenceLoop(seqStr, null, up) { line("__s = __s + __v; __c = __c + 1") }
+                line("local $r = __c == 0 and 0 / 0 or __s / __c")
+            }
+            m == "unzip" && a.isEmpty() -> terminal { r ->
+                line("local __a, __b = {}, {}")
+                sequenceLoop(seqStr, null, up) { line("__a[#__a + 1] = __v.first; __b[#__b + 1] = __v.second") }
+                line("local $r = {first = __a, second = __b}")
+            }
+            (m == "allDistinct" || m == "allDistinctBy") && a.size == (if (m == "allDistinct") 0 else 1) -> terminal { r ->
+                line("local $r, __seen = true, {}")
+                sequenceLoop(seqStr, a.firstOrNull(), up) {
+                    line("local __k = ${if (a.isEmpty()) "__v" else "__fn(__v)"}")
+                    line("if __seen[__k] then $r = false; break end; __seen[__k] = true")
+                }
+            }
+            (m == "allEqual" || m == "allEqualBy") && a.size == (if (m == "allEqual") 0 else 1) -> terminal { r ->
+                line("local $r, __first, __has = true, nil, false")
+                sequenceLoop(seqStr, a.firstOrNull(), up) {
+                    line("local __k = ${if (a.isEmpty()) "__v" else "__fn(__v)"}")
+                    line("if __has and __k ~= __first then $r = false; break end; __first = __k; __has = true")
+                }
+            }
+            m in setOf("isSorted", "isSortedDescending", "isSortedBy", "isSortedByDescending", "isSortedWith") &&
+                a.size == (if (m == "isSorted" || m == "isSortedDescending") 0 else 1) -> terminal { r ->
+                line("local $r, __prev, __has = true, nil, false")
+                if (m == "isSortedWith") line("local __cmp = ${emitExpression(a[0])}")
+                val keyed = m == "isSortedBy" || m == "isSortedByDescending"
+                sequenceLoop(seqStr, if (keyed) a[0] else null, up) {
+                    line("local __k = ${if (keyed) "__fn(__v)" else "__v"}")
+                    val outOfOrder = when (m) {
+                        "isSortedWith" -> "__cmp(__prev, __k) > 0"
+                        "isSortedDescending", "isSortedByDescending" -> "__k > __prev"
+                        else -> "__k < __prev"
+                    }
+                    line("if __has and $outOfOrder then $r = false; break end; __prev = __k; __has = true")
+                }
+            }
+            (m == "firstNotNullOf" || m == "firstNotNullOfOrNull") && a.size == 1 -> terminal { r ->
+                line("local $r = nil")
+                sequenceLoop(seqStr, a[0], up) { line("local __k = __fn(__v); if __k ~= nil then $r = __k; break end") }
+                if (m == "firstNotNullOf") line("if $r == nil then error(\"No element of the sequence was transformed to a non-null value.\", 0) end")
+            }
+            m in setOf("toMutableSet", "toHashSet") && a.isEmpty() -> terminal { emitSequenceToSetStatements(it, seqStr) }
+            m == "toSortedSet" && a.isEmpty() -> terminal { r ->
+                emitSequenceToSetStatements(r, seqStr)
+                line("table.sort($r.list)")
+            }
+            m == "asIterable" && a.isEmpty() -> terminal { emitSequenceToListStatements(it, seqStr) }
+            m == "toCollection" && a.size == 1 -> terminal { r ->
+                line("local $r = ${emitExpression(a[0])}")
+                sequenceLoop(seqStr, null, up) { emitAddToDestination(r, receiverInstanceClass(a[0]), "__v") }
+            }
+            m == "shuffled" && a.size <= 1 -> "(function() local __t = {}; for __v in ($seqStr)() do __t[#__t + 1] = __v end; " +
+                "for __i = #__t, 2, -1 do local __j = math.random(__i); __t[__i], __t[__j] = __t[__j], __t[__i] end; " +
+                "return function() local __n = 0; return function() __n = __n + 1; return __t[__n] end end end)()"
+            m == "iterator" && a.isEmpty() -> iteratorObject(seqStr)
+            m == "joinTo" && a.isNotEmpty() -> {
+                val plain = expr.args.filter { it.toExpression() !is LambdaExpr }
+                val transform = expr.args.filterIsInstance<NamedArg>().firstOrNull { it.name == "transform" }?.expr
+                    ?: expr.args.map { it.toExpression() }.filterIsInstance<LambdaExpr>().firstOrNull()
+                fun arg(name: String, position: Int) = resolveNamedOrPositional(plain, name, position)?.let { emitExpression(it) }
+                terminal { r ->
+                    line("local $r = ${arg("buffer", 0)}")
+                    line("local __sep, __post, __limit, __trunc = ${arg("separator", 1) ?: "\", \""}, ${arg("postfix", 3) ?: "\"\""}, ${arg("limit", 4) ?: "-1"}, ${arg("truncated", 5) ?: "\"...\""}")
+                    line("table.insert($r.buf, ${arg("prefix", 2) ?: "\"\""})")
+                    line("local __count = 0")
+                    sequenceLoop(seqStr, transform, up) {
+                        line("__count = __count + 1")
+                        line("if __count > 1 then table.insert($r.buf, __sep) end")
+                        line("if __limit < 0 or __count <= __limit then table.insert($r.buf, tostring(${if (transform != null) "__fn(__v)" else "__v"})) else break end")
+                    }
+                    line("if __limit >= 0 and __count > __limit then table.insert($r.buf, __trunc) end")
+                    line("table.insert($r.buf, __post)")
+                }
+            }
+            else -> null
+        }
+    }
+
+    private fun emitAddToDestination(destVar: String, destClass: String?, valueStr: String) {
+        if (destClass == "Set") {
+            emitSetAdd(destVar, valueStr)
+        } else {
+            useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
+            line("table.insert($destVar, __nilEncode($valueStr))")
+        }
+    }
+
+    /** An Iterator over a sequence factory: `hasNext()` / `next()` called with colon syntax. */
+    private fun iteratorObject(seqStr: String): String =
+        "(function() local __it = ($seqStr)(); local __nx = __it(); return {" +
+            "hasNext = function(self) return __nx ~= nil end, " +
+            "next = function(self) local __v = __nx; if __v == nil then error(\"No more elements.\", 0) end; __nx = __it(); return __nilDecode(__v) end} end)()"
+
+    /** A Lua predicate for `is T` on a runtime value. Int/Long/Double are all plain Lua numbers, so they can't be told apart. */
+    private fun instancePredicate(typeName: String): String = when (typeName) {
+        "Int", "Long", "Short", "Byte", "Double", "Float", "Number", "UInt", "ULong" -> "function(v) return type(v) == \"number\" end"
+        "String", "Char", "CharSequence" -> "function(v) return type(v) == \"string\" end"
+        "Boolean" -> "function(v) return type(v) == \"boolean\" end"
+        "Any" -> "function(v) return true end"
+        else -> "function(v) local m = getmetatable(v); while m do if m == $typeName then return true end; local n = getmetatable(m); m = n and n.__index end; return false end"
+    }
+
+    /** filterTo / mapTo / groupByTo / associateTo ... : run the operation and write into the destination collection. */
+    private fun emitSequenceToVariant(expr: MethodCallExpr, seqStr: String): String {
+        val m = expr.methodName
+        val a = expr.args.map { it.toExpression() }
+        val dest = a[0]
+        val destClass = receiverInstanceClass(dest)
+        val indexed = m.contains("Indexed")
+        val fnExpr = a.getOrNull(1)
+        val transform = a.getOrNull(2)
+        return emitSequenceTerminalExpr { r ->
+            line("local $r = ${emitExpression(dest)}")
+            if (indexed) line("local __i = -1")
+            if (transform != null) line("local __fn2 = ${callbackStrFor(transform, expr.obj)}")
+            fun add(valueStr: String) = emitAddToDestination(r, destClass, valueStr)
+            sequenceLoop(seqStr, if (m == "filterIsInstanceTo") null else fnExpr, expr.obj) {
+                if (indexed) line("__i = __i + 1")
+                val idx = if (indexed) "__i, " else ""
+                when (m) {
+                    "filterTo" -> { line("if __fn(__v) then"); pushIndent(); add("__v"); popIndent(); line("end") }
+                    "filterNotTo" -> { line("if not __fn(__v) then"); pushIndent(); add("__v"); popIndent(); line("end") }
+                    "filterIndexedTo" -> { line("if __fn(${idx}__v) then"); pushIndent(); add("__v"); popIndent(); line("end") }
+                    "filterIsInstanceTo" -> {
+                        line("if (${instancePredicate(expr.typeArgs.firstOrNull() ?: "Any")})(__v) then"); pushIndent(); add("__v"); popIndent(); line("end")
+                    }
+                    "filterNotNullTo" -> add("__v")
+                    "mapTo", "mapIndexedTo" -> add("__fn(${idx}__v)")
+                    "mapNotNullTo", "mapIndexedNotNullTo" -> {
+                        line("local __r = __fn(${idx}__v)"); line("if __r ~= nil then"); pushIndent(); add("__r"); popIndent(); line("end")
+                    }
+                    "flatMapTo", "flatMapIndexedTo" -> {
+                        line("local __r = __fn(${idx}__v)")
+                        line("if type(__r) == \"function\" then")
+                        pushIndent(); line("for __x in __r() do"); pushIndent(); add("__x"); popIndent(); line("end"); popIndent()
+                        line("else")
+                        pushIndent(); line("for _, __x in ipairs(__r.list or __r) do"); pushIndent(); add("__x"); popIndent(); line("end"); popIndent()
+                        line("end")
+                    }
+                    "groupByTo" -> {
+                        line("local __k = __fn(__v)")
+                        line("if $r.map[__k] == nil then table.insert($r.keys, __k); $r.map[__k] = {} end")
+                        line("table.insert($r.map[__k], ${if (transform != null) "__fn2(__v)" else "__v"})")
+                    }
+                    "associateTo" -> {
+                        line("local __p = __fn(__v)")
+                        emitMapPut(r, "__p.first", "__p.second", null)
+                    }
+                    "associateByTo" -> emitMapPut(r, "__fn(__v)", if (transform != null) "__fn2(__v)" else "__v", null)
+                    "associateWithTo" -> emitMapPut(r, "__v", "__fn(__v)", null)
+                    else -> error("Unsupported sequence operation $m")
+                }
+            }
+        }
+    }
+
+    /** `seq.groupingBy { key }`: the elements plus the key function; eachCount / fold / reduce / aggregate read them. */
+    private fun emitSequenceGroupingBy(upstream: Expression, keySelector: Expression): String =
+        "(function() local __items = {}; for __v in (${emitExpression(upstream)})() do __items[#__items + 1] = __v end; " +
+            "return {items = __items, keyOf = ${callbackStrFor(keySelector, upstream)}} end)()"
+
+    private fun emitGroupingCall(expr: MethodCallExpr): String? {
+        val a = expr.args.map { it.toExpression() }
+        val g = emitExpression(expr.obj)
+        return when {
+            expr.methodName == "eachCount" && a.isEmpty() ->
+                "(function(g) local __r = {keys = {}, map = {}}; for _, __v in ipairs(g.items) do local __k = g.keyOf(__nilDecode(__v)); " +
+                    "if __r.map[__k] == nil then table.insert(__r.keys, __k); __r.map[__k] = 0 end; __r.map[__k] = __r.map[__k] + 1 end; return __r end)($g)"
+            expr.methodName == "fold" && a.size == 2 ->
+                "(function(g, init, op) local __r = {keys = {}, map = {}}; for _, __v in ipairs(g.items) do local __k = g.keyOf(__nilDecode(__v)); " +
+                    "if __r.map[__k] == nil then table.insert(__r.keys, __k); __r.map[__k] = init end; __r.map[__k] = op(__r.map[__k], __nilDecode(__v)) end; return __r end)" +
+                    "($g, ${emitExpression(a[0])}, ${callbackStr(a[1])})"
+            expr.methodName == "reduce" && a.size == 1 ->
+                "(function(g, op) local __r = {keys = {}, map = {}}; for _, __v in ipairs(g.items) do local __k = g.keyOf(__nilDecode(__v)); " +
+                    "if __r.map[__k] == nil then table.insert(__r.keys, __k); __r.map[__k] = __v else __r.map[__k] = op(__k, __r.map[__k], __nilDecode(__v)) end end; return __r end)" +
+                    "($g, ${callbackStr(a[0])})"
+            expr.methodName == "aggregate" && a.size == 1 ->
+                "(function(g, op) local __r = {keys = {}, map = {}}; for _, __v in ipairs(g.items) do local __k = g.keyOf(__nilDecode(__v)); local __first = __r.map[__k] == nil; " +
+                    "if __first then table.insert(__r.keys, __k) end; __r.map[__k] = op(__k, __r.map[__k], __nilDecode(__v), __first) end; return __r end)" +
+                    "($g, ${callbackStr(a[0])})"
+            else -> null
+        }
+    }
+
     private fun emitSequenceToListStatements(resultVar: String, seqStr: String) {
         line("local $resultVar = {}")
         line("for __v in ($seqStr)() do table.insert($resultVar, __v) end")
@@ -1769,8 +2162,9 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             val paramName = callback.params.firstOrNull() ?: "it"
             types.pushScope()
             types.env.declare(paramName, TypeName.ANY)
-            line("for $paramName in ($seqStr)() do")
+            line("for __raw in ($seqStr)() do")
             pushIndent()
+            line("local $paramName = __nilDecode(__raw)")
             callback.body.body.forEach { emitStatement(it) }
             popIndent()
             line("end")
@@ -1778,7 +2172,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         } else {
             val fnVar = nextTemp("__fn")
             line("local $fnVar = ${emitExpression(callback)}")
-            line("for __v in ($seqStr)() do $fnVar(__v) end")
+            line("for __v in ($seqStr)() do $fnVar(__nilDecode(__v)) end")
         }
     }
 
@@ -1788,8 +2182,9 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             val paramName = callback.params.firstOrNull() ?: "it"
             types.pushScope()
             types.env.declare(paramName, TypeName.ANY)
-            line("for $paramName in ($seqStr)() do")
+            line("for __raw in ($seqStr)() do")
             pushIndent()
+            line("local $paramName = __nilDecode(__raw)")
             val stmts = callback.body.body
             stmts.forEachIndexed { i, stmt ->
                 if (i == stmts.lastIndex) emitLambdaResult(stmt) { "if $it then $resultVar = $paramName; break end" } else emitStatement(stmt)
@@ -1800,7 +2195,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         } else {
             val fnVar = nextTemp("__fn")
             line("local $fnVar = ${emitExpression(callback)}")
-            line("for __v in ($seqStr)() do if $fnVar(__v) then $resultVar = __v; break end end")
+            line("for __v in ($seqStr)() do if $fnVar(__nilDecode(__v)) then $resultVar = __nilDecode(__v); break end end")
         }
     }
 
@@ -1826,8 +2221,9 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             val paramName = callback.params.firstOrNull() ?: "it"
             types.pushScope()
             types.env.declare(paramName, TypeName.ANY)
-            line("for $paramName in ($seqStr)() do")
+            line("for __raw in ($seqStr)() do")
             pushIndent()
+            line("local $paramName = __nilDecode(__raw)")
             val stmts = callback.body.body
             stmts.forEachIndexed { i, stmt -> if (i == stmts.lastIndex) emitLambdaResult(stmt, sink) else emitStatement(stmt) }
             popIndent()
@@ -1838,7 +2234,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             line("local $fnVar = ${emitExpression(callback)}")
             line("for __v in ($seqStr)() do")
             pushIndent()
-            line(sink("$fnVar(__v)"))
+            line(sink("$fnVar(__nilDecode(__v))"))
             popIndent()
             line("end")
         }
@@ -1852,8 +2248,9 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             types.pushScope()
             types.env.declare(accParam, TypeName.ANY)
             types.env.declare(xParam, TypeName.ANY)
-            line("for $xParam in ($seqStr)() do")
+            line("for __raw in ($seqStr)() do")
             pushIndent()
+            line("local $xParam = __nilDecode(__raw)")
             val stmts = callback.body.body
             stmts.forEachIndexed { i, stmt ->
                 if (i == stmts.lastIndex) emitLambdaResult(stmt) { "$accParam = $it" } else emitStatement(stmt)
@@ -1866,7 +2263,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             line("local $resultVar = ${emitExpression(seed)}")
             val fnVar = nextTemp("__fn")
             line("local $fnVar = ${emitExpression(callback)}")
-            line("for __v in ($seqStr)() do $resultVar = $fnVar($resultVar, __v) end")
+            line("for __v in ($seqStr)() do $resultVar = $fnVar($resultVar, __nilDecode(__v)) end")
         }
     }
 
@@ -1918,6 +2315,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     }
 
     private fun emitSequenceTerminalExpr(body: (resultVar: String) -> Unit): String {
+        useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
         val resultVar = nextTemp("__result")
         return emitCollectionIIFE(resultVar) { body(resultVar); true }!!
     }
@@ -2033,6 +2431,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     }
 
     private fun emitCall(expr: CallExpr): String {
+        if (expr.callee == "StringBuilder" && expr.args.size <= 1 && types.classInfo("StringBuilder")?.native == true) {
+            val initial = expr.args.firstOrNull()?.toExpression()?.takeIf { types.inferExprType(it) != TypeName.INT }
+            return "{buf = {${initial?.let { formatForToString(it, emitExpression(it)) } ?: ""}}}"
+        }
         if (expr.callee == "Random" && expr.args.size == 1 && types.classInfo("Random")?.native == true) {
             useRuntimeHelper(RuntimeHelper.RANDOM)
             return "__Random.new(${emitExpression(expr.args[0].toExpression())})"
@@ -2100,8 +2502,12 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         if (expr.callee == "sequence" && expr.args.size == 1 && types.functionParamNames("sequence") == null) {
             (expr.args[0].toExpression() as? LambdaExpr)?.let { return emitSequenceBuilderExpr(it) }
         }
+        if (expr.callee == "iterator" && expr.args.size == 1 && types.functionParamNames("iterator") == null) {
+            (expr.args[0].toExpression() as? LambdaExpr)?.let { return iteratorObject(emitSequenceBuilderExpr(it)) }
+        }
         if (expr.callee == "yield" && expr.args.size == 1 && types.functionParamNames("yield") == null) {
-            return "coroutine.yield(${emitExpression(expr.args[0].toExpression())})"
+            useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
+            return "coroutine.yield(__nilEncode(${emitExpression(expr.args[0].toExpression())}))"
         }
         if (expr.callee == "yieldAll" && expr.args.size == 1 && types.functionParamNames("yieldAll") == null) {
             val arg = expr.args[0].toExpression()
@@ -2365,6 +2771,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private fun formatForToString(expr: Expression, exprStr: String): String {
         val className = receiverInstanceClass(expr)
         if (className != null && className in setOf("List", "Set", "Map")) return emitCollectionToStringExpr(className, exprStr)
+        if (className == "StringBuilder") return "table.concat($exprStr.buf)"
         if (isPairValued(expr)) return pairFormatted(exprStr)
         return if (isDoubleTyped(expr)) doubleFormatted(exprStr) else "tostring($exprStr)"
     }
@@ -2372,6 +2779,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private fun collectionAwareOrPlain(expr: Expression, exprStr: String): String {
         val className = receiverInstanceClass(expr)
         if (className != null && className in setOf("List", "Set", "Map")) return emitCollectionToStringExpr(className, exprStr)
+        if (className == "StringBuilder") return "table.concat($exprStr.buf)"
         if (isPairValued(expr)) return pairFormatted(exprStr)
         return if (isDoubleTyped(expr)) doubleFormatted(exprStr) else exprStr
     }

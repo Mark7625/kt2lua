@@ -49,6 +49,7 @@ object ClassEmitter {
     private fun emitDataClassToString(decl: ClassDecl, ctx: EmitContext) {
         val fields = decl.params.joinToString(", ") { "${it.name}=\" .. tostring(self.${it.name}) .. \"" }
         ctx.line("${decl.name}.__tostring = function(self) return \"${decl.name}($fields)\" end")
+        ctx.line("${decl.name}.__data = true")
     }
 
     private fun emitClassMethod(className: String, fn: FunctionDecl, ctx: EmitContext) {

@@ -20,7 +20,7 @@ private val MULTIPLICATIVE_OPS = mapOf(
 )
 
 /** Index into [Parser.binaryLevels] for the additive level — see [Parser.parseAdditive]. */
-private const val ADDITIVE_LEVEL = 9
+private const val ADDITIVE_LEVEL = 10
 
 /** One precedence level of this subset's binary operators, loosest-binding first. [matchOp]
  * recognizes and consumes this level's operator at the current token, or returns null without
@@ -293,6 +293,19 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
         return null
     }
 
+    /** `x is T` / `x !is T`; the type name is parsed as an identifier operand. */
+    private fun matchIsOp(): String? {
+        val previous = tokens.getOrNull(cursor.pos - 1)
+        if (previous != null && previous.line < current().line && (check(TokenType.IS) || check(TokenType.NOT))) return null
+        if (check(TokenType.NOT) && peekType(1) == TokenType.IS) {
+            advance()
+            advance()
+            return "!is"
+        }
+        if (match(TokenType.IS)) return "is"
+        return null
+    }
+
     /** `a..b`, `a until b`, `a downTo b`. */
     private fun matchRangeOp(): String? {
         if (match(TokenType.DOT_DOT)) return ".."
@@ -328,6 +341,9 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
         BinaryLevel({ matchTokenOp(EQUALITY_OPS) }),
         BinaryLevel({ matchTokenOp(RELATIONAL_OPS) }),
         BinaryLevel({ matchInOp() }),
+        BinaryLevel({ matchIsOp() }, build = { op, l, r ->
+            IsExpr(l, (r as? Identifier)?.name ?: error("'is' must be followed by a plain type name"), negated = op == "!is")
+        }),
         BinaryLevel({ if (match(TokenType.ELVIS)) "?:" else null }, build = { _, l, r -> ElvisExpr(l, r) }),
         BinaryLevel({ matchInfixTo() }, build = { _, l, r -> ToPairExpr(l, r) }),
         BinaryLevel({ if (match(TokenType.STEP)) "step" else null }, build = { _, l, r ->
@@ -408,8 +424,9 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
             advance()
             sawSafe = sawSafe || safe
             val name = expectIdentifierName()
+            val typeArgs = if (check(TokenType.LT) && looksLikeGenericCallArgs()) captureGenericArgs() else emptyList()
             steps.add(
-                if (check(TokenType.LPAREN) || check(TokenType.LBRACE)) ChainCall(name, parseArgsWithTrailingLambda(), safe)
+                if (check(TokenType.LPAREN) || check(TokenType.LBRACE)) ChainCall(name, parseArgsWithTrailingLambda(), safe, typeArgs)
                 else ChainProp(name, safe)
             )
         }
@@ -435,7 +452,7 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
         for (step in steps) {
             expr = when (step) {
                 is ChainProp -> PropertyAccessExpr(expr, step.name)
-                is ChainCall -> MethodCallExpr(expr, step.name, step.args)
+                is ChainCall -> MethodCallExpr(expr, step.name, step.args, step.typeArgs)
             }
         }
         return expr
@@ -525,6 +542,23 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
             i++
         }
         return false
+    }
+
+    /** Like [skipGenericArgs], but keeps the names written directly inside the angle brackets (`filterIsInstance<String>()`). */
+    private fun captureGenericArgs(): List<String> {
+        expect(TokenType.LT)
+        val names = mutableListOf<String>()
+        var depth = 1
+        while (depth > 0) {
+            when (current().type) {
+                TokenType.LT -> depth++
+                TokenType.GT -> depth--
+                TokenType.IDENTIFIER -> if (depth == 1) names.add(current().text!!)
+                else -> {}
+            }
+            advance()
+        }
+        return names
     }
 
     private fun skipGenericArgs() {

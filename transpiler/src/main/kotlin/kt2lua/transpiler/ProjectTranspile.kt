@@ -250,6 +250,7 @@ private fun collectFreeNames(expr: Expression, out: MutableSet<String>) {
             collectFreeNames(expr.start, out)
             collectFreeNames(expr.end, out)
         }
+        is IsExpr -> collectFreeNames(expr.expr, out)
         is WhenExpr -> {
             expr.subject?.let { collectFreeNames(it, out) }
             for (branch in expr.branches) {

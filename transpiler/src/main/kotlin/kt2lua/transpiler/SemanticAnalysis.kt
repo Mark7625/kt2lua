@@ -296,14 +296,19 @@ class TypeAnalyzer {
         is IndexExpr -> TypeName.ANY
         is ToPairExpr -> TypeName.ANY
         is RangeExpr -> TypeName.ANY
+        is IsExpr -> TypeName.BOOLEAN
     }
 
     private fun classOfExpr(expr: Expression): String? = when (expr) {
         is Identifier -> instanceClassOf(expr.name) ?: "Random".takeIf { expr.name == "Random" && env.lookup("Random") == null && "Random" in classes }
         is PropertyAccessExpr -> "Random".takeIf { expr.name == "Default" && (expr.obj as? Identifier)?.name == "Random" && "Random" in classes }
         is ParenExpr -> classOfExpr(expr.expr)
-        is MethodCallExpr -> classOfExpr(expr.obj)?.let { methodReturnClass(it, expr.methodName) }
-        is CallExpr -> if (expr.callee in classes) expr.callee else functionReturnClass(expr.callee)
+        is MethodCallExpr -> classOfExpr(expr.obj)?.let {
+            if (it == "Sequence" && expr.methodName in SEQUENCE_CHAIN_METHODS) "Sequence" else methodReturnClass(it, expr.methodName)
+        }
+        is CallExpr -> if (expr.callee in classes) expr.callee
+            else if (expr.callee in setOf("sequenceOf", "generateSequence", "emptySequence", "sequence") && "Sequence" in classes) "Sequence"
+            else functionReturnClass(expr.callee)
         else -> null
     }
 

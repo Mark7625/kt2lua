@@ -277,14 +277,24 @@ class Interpreter(
             "%" -> asNumber(l).mod(asNumber(r))
             "^" -> Math.pow(asNumber(l), asNumber(r))
             ".." -> tostring(l) + tostring(r)
-            "==" -> l == r
-            "~=" -> l != r
+            "==" -> luaEquals(l, r)
+            "~=" -> !luaEquals(l, r)
             "<" -> luaLess(l, r)
             ">" -> luaLess(r, l)
-            "<=" -> !luaLess(r, l)
-            ">=" -> !luaLess(l, r)
+            "<=" -> luaLess(l, r) || luaEquals(l, r)
+            ">=" -> luaLess(r, l) || luaEquals(l, r)
             else -> throw LuaRuntimeException("Unknown binary operator '${expr.op}'")
         }
+    }
+
+    /** Numbers compare as IEEE doubles (NaN is not equal to itself), unlike boxed `Double.equals`. */
+    private fun luaEquals(l: Any?, r: Any?): Boolean {
+        if (l is Double && r is Double) {
+            val a: Double = l
+            val b: Double = r
+            return a == b
+        }
+        return l == r
     }
 
     private fun luaLess(l: Any?, r: Any?): Boolean {
