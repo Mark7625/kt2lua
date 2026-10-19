@@ -157,6 +157,25 @@ private fun installMath(globals: Environment) {
         if (base != null) Math.log(x) / Math.log(base) else Math.log(x)
     })
     math.rawSet("log10", native("log10") { a -> Math.log10(asNumber(a[0])) })
+    math.rawSet("asin", native("asin") { a -> Math.asin(asNumber(a[0])) })
+    math.rawSet("acos", native("acos") { a -> Math.acos(asNumber(a[0])) })
+    math.rawSet("atan", native("atan") { a -> Math.atan(asNumber(a[0])) })
+    math.rawSet("atan2", native("atan2") { a -> Math.atan2(asNumber(a[0]), asNumber(a[1])) })
+    math.rawSet("sinh", native("sinh") { a -> Math.sinh(asNumber(a[0])) })
+    math.rawSet("cosh", native("cosh") { a -> Math.cosh(asNumber(a[0])) })
+    math.rawSet("tanh", native("tanh") { a -> Math.tanh(asNumber(a[0])) })
+    math.rawSet("ldexp", native("ldexp") { a -> Math.scalb(asNumber(a[0]), asNumber(a[1]).toInt()) })
+    math.rawSet("frexp", NativeFunction("frexp") { a ->
+        val x = asNumber(a[0])
+        if (x == 0.0 || x.isNaN() || x.isInfinite()) {
+            listOf(x, 0.0)
+        } else {
+            val scale = if (Math.abs(x) < java.lang.Double.MIN_NORMAL) 54 else 0
+            val scaled = Math.scalb(x, scale)
+            val e = Math.getExponent(scaled) + 1
+            listOf(Math.scalb(scaled, -e), (e - scale).toDouble())
+        }
+    })
     val random = java.util.Random()
     math.rawSet("randomseed", native("randomseed") { a -> random.setSeed(asNumber(a[0]).toLong()); null })
     math.rawSet("random", native("random") { a ->

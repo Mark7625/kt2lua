@@ -14,7 +14,8 @@ enum class RuntimeHelper(resource: String) {
     FMT_DOUBLE("fmt_double"),
     TO_INT("to_int"),
     EXCEPTION("exception"),
-    MATH("math"),
+    MATH_FLOAT("math_float"),
+    MATH_PRECISE("math_precise"),
     RANDOM("random");
 
     val source: String = loadRuntimeSource(resource)

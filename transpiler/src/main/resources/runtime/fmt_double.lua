@@ -11,6 +11,10 @@ local function __fmtDouble(x)
     if 1 / x < 0 then return "-0.0" end
     return "0.0"
   end
+  if math.abs(x) == 2 ^ -1074 then
+    if x < 0 then return "-4.9E-324" end
+    return "4.9E-324"
+  end
   local e
   for p = 0, 16 do
     e = string.format("%." .. p .. "e", x)

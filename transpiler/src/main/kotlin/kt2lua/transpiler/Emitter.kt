@@ -445,8 +445,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         if (expr.methodName == "pow" && expr.args.size == 1 && receiverInstanceClass(expr.obj) == null && !hasDeclaredMethod(expr)) {
             return "(${emitExpression(expr.obj)} ^ ${emitExpression(expr.args[0].toExpression())})"
         }
-        if (expr.methodName in setOf("roundToInt", "roundToLong") && expr.args.isEmpty() && receiverInstanceClass(expr.obj) == null) {
-            return "math.floor(${emitExpression(expr.obj)} + 0.5)"
+        if (receiverInstanceClass(expr.obj) == null && !hasDeclaredMethod(expr)) {
+            emitMathExtensionCall(expr)?.let { return it }
         }
         if (expr.methodName == "invoke" && !hasDeclaredMethod(expr) && receiverInstanceClass(expr.obj) == null) {
             return "${emitExpression(expr.obj)}(${emitArgList(expr.args)})"
@@ -972,6 +972,11 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     }
 
     private fun emitPropertyAccess(receiver: Expression, name: String): String {
+        if (name == "absoluteValue" && receiverInstanceClass(receiver) == null) return "math.abs(${emitExpression(receiver)})"
+        if (name == "ulp" && receiverInstanceClass(receiver) == null) {
+            useRuntimeHelper(RuntimeHelper.MATH_FLOAT)
+            return "__ulp(${emitExpression(receiver)})"
+        }
         if (isDefaultRandom(PropertyAccessExpr(receiver, name))) return emitExpression(receiver)
         if (receiver is Identifier && receiver.name == "Int" && types.env.lookup("Int") == null) {
             when (name) {
@@ -1768,7 +1773,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             return emitArgList(expr.args)
         }
         val positional = expr.args.map { emitExpression(it.toExpression()) }
-        if (types.functionParamNames(expr.callee) == null) emitMathCall(expr.callee, positional)?.let { return it }
+        if (types.functionParamNames(expr.callee) == null) emitMathCall(expr.callee, positional, expr.args.map { it.toExpression() })?.let { return it }
         return when (expr.callee) {
             "println" -> "print(${expr.args.mapIndexed { i, arg -> collectionAwareOrPlain(arg.toExpression(), positional[i]) }.joinToString(", ")})"
             "print" -> "io.write(${if (expr.args.isEmpty()) "\"\"" else formatForToString(expr.args[0].toExpression(), positional[0])})"
@@ -1789,23 +1794,64 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         else -> "(function(lo, hi) return lo + math.random() * (hi - lo) end)(${args[0]}, ${args[1]})"
     }
 
-    /** `kotlin.math`'s top-level functions; null when [name] isn't one (or has an unexpected arity). */
-    private fun emitMathCall(name: String, args: List<String>): String? {
+    /** An inline Lua expression built from [build], which may use its argument several times: a
+     * plain identifier/literal is repeated as-is, anything else is passed through a one-off
+     * function so it is only evaluated once. No runtime helper is involved either way. */
+    private fun inlineOnce(exprs: List<Expression>, strs: List<String>, build: (List<String>) -> String): String {
+        if (exprs.all { it is Identifier || it is IntLiteral || it is DoubleLiteral }) return build(strs)
+        val params = listOf("a", "b").take(strs.size)
+        return "(function(${params.joinToString(", ")}) return ${build(params)} end)(${strs.joinToString(", ")})"
+    }
+
+    /** `kotlin.math`'s top-level functions: Lua's own `math.*` where it has the function, otherwise
+     * an inline expression from several of them; null when [name] isn't one (or has another arity). */
+    private fun emitMathCall(name: String, args: List<String>, exprs: List<Expression>): String? {
         val one = args.size == 1
         val two = args.size == 2
         return when {
-            one && name in setOf("sqrt", "abs", "floor", "ceil", "sin", "cos", "tan", "exp") -> "math.$name(${args[0]})"
-            two && name in setOf("max", "min") -> "math.$name(${args[0]}, ${args[1]})"
+            one && name in setOf("sqrt", "abs", "floor", "ceil", "sin", "cos", "tan", "exp", "asin", "acos", "atan", "sinh", "cosh", "tanh", "log10") ->
+                "math.$name(${args[0]})"
+            one && name == "ln" -> "math.log(${args[0]})"
+            two && name in setOf("max", "min", "atan2") -> "math.$name(${args[0]}, ${args[1]})"
             two && name == "pow" -> "(${args[0]} ^ ${args[1]})"
             one && name == "log2" -> "(math.log(${args[0]}) / math.log(2))"
             two && name == "log" -> "(math.log(${args[0]}) / math.log(${args[1]}))"
-            one && name in setOf("round", "sign", "truncate", "log10") -> {
-                useRuntimeHelper(RuntimeHelper.MATH)
+            one && name == "asinh" -> inlineOnce(exprs, args) { (x) -> "((${x} < 0 and -1 or 1) * math.log(math.abs($x) + math.sqrt($x * $x + 1)))" }
+            one && name == "acosh" -> inlineOnce(exprs, args) { (x) -> "math.log($x + math.sqrt($x * $x - 1))" }
+            one && name == "atanh" -> inlineOnce(exprs, args) { (x) -> "(math.log((1 + $x) / (1 - $x)) / 2)" }
+            one && name == "sign" -> inlineOnce(exprs, args) { (x) -> "($x > 0 and 1 or ($x < 0 and -1 or $x))" }
+            one && name == "truncate" -> inlineOnce(exprs, args) { (x) -> "($x >= 0 and math.floor($x) or math.ceil($x))" }
+            one && name == "round" -> "((${args[0]} + 6755399441055744) - 6755399441055744)"
+            two && name == "hypot" -> inlineOnce(exprs, args) { (x, y) -> "math.sqrt($x * $x + $y * $y)" }
+            one && name in setOf("cbrt", "expm1", "ln1p") -> {
+                useRuntimeHelper(RuntimeHelper.MATH_PRECISE)
                 "__$name(${args[0]})"
             }
-            two && name == "hypot" -> {
-                useRuntimeHelper(RuntimeHelper.MATH)
-                "__hypot(${args[0]}, ${args[1]})"
+            else -> null
+        }
+    }
+
+    /** `kotlin.math`'s extension functions on Double/Int (`x.roundToInt()`, `x.nextUp()`, ...). */
+    private fun emitMathExtensionCall(expr: MethodCallExpr): String? {
+        val args = expr.args.map { emitExpression(it.toExpression()) }
+        val receiver = emitExpression(expr.obj)
+        return when {
+            expr.methodName in setOf("roundToInt", "roundToLong") && args.isEmpty() -> "math.floor($receiver + 0.5)"
+            expr.methodName in setOf("nextUp", "nextDown") && args.isEmpty() -> {
+                useRuntimeHelper(RuntimeHelper.MATH_FLOAT)
+                "__${expr.methodName}($receiver)"
+            }
+            expr.methodName == "nextTowards" && args.size == 1 -> {
+                useRuntimeHelper(RuntimeHelper.MATH_FLOAT)
+                "__nextTowards($receiver, ${args[0]})"
+            }
+            expr.methodName == "withSign" && args.size == 1 ->
+                inlineOnce(listOf(expr.obj, expr.args[0].toExpression()), listOf(receiver, args[0])) { (x, sign) ->
+                    "(($sign < 0 or 1 / $sign < 0) and -math.abs($x) or math.abs($x))"
+                }
+            expr.methodName == "IEEErem" && args.size == 1 -> {
+                useRuntimeHelper(RuntimeHelper.MATH_PRECISE)
+                "__ieeerem($receiver, ${args[0]})"
             }
             else -> null
         }

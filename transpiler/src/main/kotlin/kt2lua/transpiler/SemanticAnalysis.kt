@@ -106,7 +106,8 @@ private val NUMERIC_CAST_RESULT = mapOf(
     "toInt" to TypeName.INT, "toLong" to TypeName.INT, "toShort" to TypeName.INT, "toByte" to TypeName.INT,
 )
 
-private val DOUBLE_MATH_FUNCTIONS = setOf("sqrt", "floor", "ceil", "sin", "cos", "tan", "exp", "log", "log2", "log10", "hypot", "pow")
+private val DOUBLE_MATH_FUNCTIONS = setOf("sqrt", "floor", "ceil", "sin", "cos", "tan", "exp", "log", "log2", "log10", "hypot", "pow",
+    "asin", "acos", "atan", "atan2", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "cbrt", "expm1", "ln", "ln1p")
 
 private val BUILTIN_SIGS = mapOf(
     "println" to FunctionSig(emptyList(), TypeName.UNIT),
@@ -267,7 +268,13 @@ class TypeAnalyzer {
         is UnaryExpr -> if (expr.op == "!") TypeName.BOOLEAN else inferExprType(expr.expr)
         is BinaryExpr -> inferBinaryType(expr)
         is CallExpr -> inferCallType(expr)
-        is PropertyAccessExpr -> classOfExpr(expr.obj)?.let { classes[it]?.propertyTypes?.get(expr.name) }?.let(::normalizeType) ?: TypeName.ANY
+        is PropertyAccessExpr -> classOfExpr(expr.obj)?.let { classes[it]?.propertyTypes?.get(expr.name) }?.let(::normalizeType)
+            ?: when {
+                classOfExpr(expr.obj) != null -> TypeName.ANY
+                expr.name == "absoluteValue" -> inferExprType(expr.obj)
+                expr.name == "ulp" -> TypeName.DOUBLE
+                else -> TypeName.ANY
+            }
         is MethodCallExpr -> inferMethodCallType(expr)
         is FunctionRef -> TypeName.ANY
         is IfExpr -> combineBranchTypes(inferExprType(expr.thenExpr), inferExprType(expr.elseExpr))
@@ -296,6 +303,7 @@ class TypeAnalyzer {
     private fun inferMethodCallType(expr: MethodCallExpr): TypeName {
         if (expr.args.isEmpty()) NUMERIC_CAST_RESULT[expr.methodName]?.let { return it }
         if (expr.args.isEmpty() && (expr.methodName == "roundToInt" || expr.methodName == "roundToLong")) return TypeName.INT
+        if (classOfExpr(expr.obj) == null && expr.methodName in setOf("nextUp", "nextDown", "nextTowards", "withSign", "IEEErem")) return TypeName.DOUBLE
         if (expr.args.size == 1 && expr.methodName == "pow" && classOfExpr(expr.obj) == null) return TypeName.DOUBLE
         val raw = classOfExpr(expr.obj)?.let { classes[it]?.methodReturnTypes?.get(expr.methodName) } ?: return TypeName.ANY
         return normalizeType(raw)
