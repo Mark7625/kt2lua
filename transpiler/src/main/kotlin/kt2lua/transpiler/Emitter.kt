@@ -454,8 +454,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         if (expr.args.isEmpty() && expr.methodName in NUMERIC_CAST_NAMES) {
             val inner = emitExpression(expr.obj)
             if (expr.methodName in setOf("toDouble", "toFloat") || types.inferExprType(expr.obj) == TypeName.INT) return inner
-            useRuntimeHelper(RuntimeHelper.TO_INT)
-            return "__toInt($inner)"
+            return "(math.modf(tonumber($inner)))"
         }
         if (expr.args.isEmpty() && expr.methodName == "toString") return formatForToString(expr.obj, emitExpression(expr.obj))
         if (expr.args.isEmpty() && expr.methodName == "hashCode") return emitHashCodeExpr(expr.obj)
@@ -914,11 +913,9 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         val rhsStr = emitExpression(stmt.expr)
         val targetType = (stmt.target as? NameTarget)?.let { types.env.lookup(it.name) }
         if (binOp == "/" && targetType == TypeName.INT && types.inferExprType(stmt.expr) == TypeName.INT) {
-            usedRuntimeHelpers += RuntimeHelper.INT_DIV
-            line("$targetStr = __intdiv($targetStr, $rhsStr)")
+            line("$targetStr = (math.modf($targetStr / $rhsStr))")
         } else if (binOp == "%") {
-            usedRuntimeHelpers += RuntimeHelper.MOD
-            line("$targetStr = __mod($targetStr, $rhsStr)")
+            line("$targetStr = math.fmod($targetStr, $rhsStr)")
         } else if (binOp == "+" && (targetType == TypeName.STRING || types.inferExprType(stmt.expr) == TypeName.STRING)) {
             line("$targetStr = ${concatOperand(Identifier(""), targetStr, forceString = targetType == TypeName.STRING)} .. ${concatOperand(stmt.expr, rhsStr)}")
         } else {
@@ -1683,15 +1680,13 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                 val lt = types.inferExprType(expr.left)
                 val rt = types.inferExprType(expr.right)
                 if (lt == TypeName.INT && rt == TypeName.INT) {
-                    usedRuntimeHelpers += RuntimeHelper.INT_DIV
-                    "__intdiv($leftStr, $rightStr)"
+                    "(math.modf($leftStr / $rightStr))"
                 } else {
                     "($leftStr / $rightStr)"
                 }
             }
             "%" -> {
-                usedRuntimeHelpers += RuntimeHelper.MOD
-                "__mod($leftStr, $rightStr)"
+                "math.fmod($leftStr, $rightStr)"
             }
             else -> "($leftStr ${expr.op} $rightStr)"
         }

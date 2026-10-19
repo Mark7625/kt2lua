@@ -43,16 +43,18 @@ class EmitterTest {
     }
 
     @Test
-    fun `int divided by int truncates via the intdiv helper`() {
+    fun `int divided by int truncates with math modf and needs no helper`() {
         val code = emit("fun main() { println(7 / 2) }")
-        assertTrue(code.contains("local function __intdiv(a, b)"))
-        assertTrue(code.contains("print(__intdiv(7, 2))"))
+        assertTrue(code.contains("print((math.modf(7 / 2)))"))
+        assertTrue(!code.contains("local function __"))
     }
 
     @Test
-    fun `intdiv helper is omitted when never needed`() {
-        val code = emit("fun main() { println(7.0 / 2.0) }")
-        assertTrue(!code.contains("__intdiv"))
+    fun `double division and remainder use plain Lua operators and math fmod`() {
+        val code = emit("fun main() { println(7.0 / 2.0); println(7 % 2) }")
+        assertTrue(code.contains("(7.0 / 2.0)"))
+        assertTrue(code.contains("math.fmod(7, 2)"))
+        assertTrue(!code.contains("modf"))
     }
 
     @Test

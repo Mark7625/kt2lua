@@ -137,10 +137,7 @@ private fun installMath(globals: Environment) {
     math.rawSet("min", native("min") { a -> a.minOf { asNumber(it) } })
     math.rawSet("pow", native("pow") { a -> Math.pow(asNumber(a[0]), asNumber(a[1])) })
     math.rawSet("fmod", native("fmod") { a ->
-        val x = asNumber(a[0])
-        val y = asNumber(a[1])
-        val q = x / y
-        x - y * (if (q >= 0) Math.floor(q) else Math.ceil(q))
+        asNumber(a[0]) % asNumber(a[1])
     })
     math.rawSet("modf", NativeFunction("modf") { a ->
         val v = asNumber(a[0])
