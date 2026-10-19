@@ -2,9 +2,9 @@
   "library": "kotlin-stdlib",
   "kotlinVersion": "2.3.0",
   "package": "kotlin.streams",
-  "documentation": "java.util.stream.Stream <-> kotlin.sequences.Sequence interop (JDK8 extensions). Entirely unsupported — no Java Stream type exists, there's nothing to interop with.",
+  "documentation": "java.util.stream.Stream <-> kotlin.sequences.Sequence interop. A Stream is represented as the Sequence it came from, so the two conversions are the identity; Java Stream APIs themselves (Stream.of, collect, ...) are not modelled.",
   "declarations": [
-    {"id": "kotlin.streams.Stream.asSequence()", "name": "asSequence", "kind": "extension", "receiver": "Stream<T>", "status": "unsupported", "limitations": ["No java.util.stream.Stream type exists in this subset"]},
-    {"id": "kotlin.streams.Sequence.asStream()", "name": "asStream", "kind": "extension", "receiver": "Sequence<T>", "status": "unsupported", "limitations": ["The Sequence side of this interop exists and is supported — the Stream side it converts to/from does not"]}
+    {"id": "kotlin.streams.Stream.asSequence()", "name": "asSequence", "kind": "extension", "receiver": "Stream<T>", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Identity: a Stream is represented as a Sequence"},
+    {"id": "kotlin.streams.Sequence.asStream()", "name": "asStream", "kind": "extension", "receiver": "Sequence<T>", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Identity: the Sequence is used as the Stream"}
   ]
 }

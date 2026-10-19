@@ -195,7 +195,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         }
 
     private fun collectionMethodResultKind(receiverClass: String, expr: MethodCallExpr): String? = when {
-        expr.methodName == "asSequence" -> "Sequence"
+        expr.methodName == "asSequence" || expr.methodName == "asStream" -> "Sequence"
         receiverClass == "Sequence" && expr.methodName in SEQUENCE_CHAIN_METHODS -> "Sequence"
         receiverClass == "Sequence" && expr.methodName in setOf("toList", "toMutableList") -> "List"
         receiverClass == "Sequence" && expr.methodName == "toSet" -> "Set"
@@ -555,6 +555,11 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         }
         if (expr.methodName == "asSequence" && expr.args.isEmpty() && collClass in setOf("List", "Set")) {
             return emitListToSequenceExpr(expr.obj)
+        }
+        if (collClass == "Sequence" && expr.args.isEmpty() && (expr.methodName == "asSequence" || expr.methodName == "asStream")) {
+            // A java.util.stream.Stream is represented as the Sequence it came from, so converting
+            // either way is the identity.
+            return emitExpression(expr.obj)
         }
         if (collClass == "Sequence") {
             val seqStr = emitExpression(expr.obj)
