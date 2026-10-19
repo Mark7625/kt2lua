@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/lua-5.1-2C2D72?logo=lua&logoColor=white" alt="Lua 5.1">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license">
   <a href="https://mvnrepository.com/artifact/io.github.mark7625/kt2lua"><img src="https://badges.mvnrepository.com/badge/io.github.mark7625/kt2lua/badge.svg?label=MvnRepository" alt="MvnRepository"></a>
-  <!-- compat-badge:start --><img src="https://img.shields.io/badge/stdlib%20coverage-27%25-orange" alt="Kotlin stdlib coverage"><!-- compat-badge:end -->
+  <!-- compat-badge:start --><img src="https://img.shields.io/badge/stdlib%20coverage-30%25-orange" alt="Kotlin stdlib coverage"><!-- compat-badge:end -->
 </p>
 
 kt2lua transpiles a small subset of Kotlin into Lua 5.1, and ships its own Lua
@@ -106,10 +106,10 @@ locally.
 | [kotlin.ranges](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.ranges/) | 29/29 | 0 | 0 | 100% |
 | [kotlin.sequences](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.sequences/) | 149/149 | 0 | 0 | 100% |
 | [kotlin.streams](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.streams/) | 3/3 | 0 | 0 | 100% |
-| [kotlin.system](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.system/) | 0/7 | 0 | 7 | 0% |
+| [kotlin.system](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.system/) | 7/7 | 0 | 0 | 100% |
 | [kotlin.text](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.text/) | 5/309 | 1 | 303 | 1% |
-| [kotlin.time](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/) | 0/29 | 0 | 29 | 0% |
-| **Total** | **360/1290** | **43** | **887** | **27%** |
+| [kotlin.time](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/) | 29/29 | 0 | 0 | 100% |
+| **Total** | **396/1290** | **43** | **851** | **30%** |
 
 _Done = fully implemented; Partial = implemented with a real caveat, not counted toward % Complete; Left = not started at all. See the tracking issue for exactly what each partial entry is missing._
 <!-- compat-report:end -->
