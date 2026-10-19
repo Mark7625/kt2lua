@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/lua-5.1-2C2D72?logo=lua&logoColor=white" alt="Lua 5.1">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license">
   <a href="https://mvnrepository.com/artifact/io.github.mark7625/kt2lua"><img src="https://badges.mvnrepository.com/badge/io.github.mark7625/kt2lua/badge.svg?label=MvnRepository" alt="MvnRepository"></a>
-  <!-- compat-badge:start --><img src="https://img.shields.io/badge/stdlib%20coverage-58%25-yellow" alt="Kotlin stdlib coverage"><!-- compat-badge:end -->
+  <!-- compat-badge:start --><img src="https://img.shields.io/badge/stdlib%20coverage-27%25-orange" alt="Kotlin stdlib coverage"><!-- compat-badge:end -->
 </p>
 
 kt2lua transpiles a small subset of Kotlin into Lua 5.1, and ships its own Lua
@@ -96,20 +96,20 @@ locally.
 <!-- compat-report:start -->
 | Package | Done | Partial | Left | % Complete |
 |---|---|---|---|---|
-| [kotlin](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/) | 8/43 | 21 | 14 | 18% |
-| [kotlin.collections](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/) | 110/129 | 19 | 0 | 85% |
+| [kotlin](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/) | 8/206 | 21 | 177 | 3% |
+| [kotlin.collections](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/) | 112/365 | 19 | 234 | 30% |
 | [kotlin.enums](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.enums/) | 0/2 | 0 | 2 | 0% |
-| [kotlin.io](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.io/) | 0/13 | 2 | 11 | 0% |
-| [kotlin.io.path](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.io.path/) | 0/7 | 0 | 7 | 0% |
-| [kotlin.math](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.math/) | 20/20 | 0 | 0 | 100% |
-| [kotlin.random](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.random/) | 5/5 | 0 | 0 | 100% |
-| [kotlin.ranges](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.ranges/) | 0/6 | 4 | 2 | 0% |
-| [kotlin.sequences](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.sequences/) | 22/26 | 4 | 0 | 84% |
-| [kotlin.streams](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.streams/) | 0/2 | 0 | 2 | 0% |
-| [kotlin.system](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.system/) | 0/4 | 0 | 4 | 0% |
-| [kotlin.text](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.text/) | 5/29 | 1 | 23 | 17% |
-| [kotlin.time](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/) | 0/6 | 0 | 6 | 0% |
-| **Total** | **170/292** | **51** | **71** | **58%** |
+| [kotlin.io](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.io/) | 0/56 | 2 | 54 | 0% |
+| [kotlin.io.path](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.io.path/) | 0/81 | 0 | 81 | 0% |
+| [kotlin.math](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.math/) | 43/43 | 0 | 0 | 100% |
+| [kotlin.random](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.random/) | 11/11 | 0 | 0 | 100% |
+| [kotlin.ranges](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.ranges/) | 29/29 | 0 | 0 | 100% |
+| [kotlin.sequences](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.sequences/) | 149/149 | 0 | 0 | 100% |
+| [kotlin.streams](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.streams/) | 3/3 | 0 | 0 | 100% |
+| [kotlin.system](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.system/) | 0/7 | 0 | 7 | 0% |
+| [kotlin.text](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.text/) | 5/309 | 1 | 303 | 1% |
+| [kotlin.time](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/) | 0/29 | 0 | 29 | 0% |
+| **Total** | **360/1290** | **43** | **887** | **27%** |
 
 _Done = fully implemented; Partial = implemented with a real caveat, not counted toward % Complete; Left = not started at all. See the tracking issue for exactly what each partial entry is missing._
 <!-- compat-report:end -->
