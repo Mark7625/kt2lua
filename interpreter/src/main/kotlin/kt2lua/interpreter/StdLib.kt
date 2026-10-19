@@ -164,9 +164,9 @@ private fun installMath(globals: Environment) {
             0 -> random.nextDouble()
             1 -> (1 + random.nextInt(asNumber(a[0]).toInt())).toDouble()
             else -> {
-                val lo = asNumber(a[0]).toInt()
-                val hi = asNumber(a[1]).toInt()
-                (lo + random.nextInt(hi - lo + 1)).toDouble()
+                val lo = asNumber(a[0]).toLong()
+                val hi = asNumber(a[1]).toLong()
+                (lo + java.util.concurrent.ThreadLocalRandom.current().nextLong(hi - lo + 1)).toDouble()
             }
         }
     })

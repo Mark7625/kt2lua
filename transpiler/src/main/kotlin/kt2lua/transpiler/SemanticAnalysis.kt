@@ -285,7 +285,8 @@ class TypeAnalyzer {
     }
 
     private fun classOfExpr(expr: Expression): String? = when (expr) {
-        is Identifier -> instanceClassOf(expr.name)
+        is Identifier -> instanceClassOf(expr.name) ?: "Random".takeIf { expr.name == "Random" && env.lookup("Random") == null && "Random" in classes }
+        is PropertyAccessExpr -> "Random".takeIf { expr.name == "Default" && (expr.obj as? Identifier)?.name == "Random" && "Random" in classes }
         is ParenExpr -> classOfExpr(expr.expr)
         is MethodCallExpr -> classOfExpr(expr.obj)?.let { methodReturnClass(it, expr.methodName) }
         is CallExpr -> if (expr.callee in classes) expr.callee else functionReturnClass(expr.callee)

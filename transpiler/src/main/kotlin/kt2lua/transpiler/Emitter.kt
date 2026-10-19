@@ -82,6 +82,8 @@ import kt2lua.transpiler.stdlib.registry.CollectionLoweringContext
 import kt2lua.transpiler.stdlib.registry.OperationCall
 import kt2lua.transpiler.stdlib.registry.OperationRegistry
 
+private val RANDOM_METHODS = setOf("nextInt", "nextDouble", "nextBoolean")
+
 private fun formatDouble(value: Double): String =
     if (value == Math.floor(value) && !value.isInfinite()) {
         "${value.toLong()}.0"
@@ -210,6 +212,14 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         types.registerExternalClass("Map", ClassInfo(emptyList(), emptySet(), false, propertyTypes = mapOf("size" to "Int"), native = true))
         types.registerExternalClass("Sequence", ClassInfo(emptyList(), emptySet(), false, native = true))
         types.registerExternalClass("Pair", ClassInfo(emptyList(), emptySet(), false, native = true))
+        types.registerExternalClass(
+            "Random",
+            ClassInfo(
+                emptyList(), RANDOM_METHODS, false,
+                methodReturnTypes = mapOf("nextInt" to "Int", "nextDouble" to "Double", "nextBoolean" to "Boolean"),
+                native = true,
+            ),
+        )
         for ((name, info) in externalClasses) types.registerExternalClass(name, info)
         types.collectSignatures(program.body)
         val hasMain = program.body.any { it is FunctionDecl && it.name == "main" }
@@ -425,6 +435,13 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private val NUMERIC_CAST_NAMES = setOf("toDouble", "toInt", "toFloat", "toLong", "toShort", "toByte")
 
     private fun emitMethodCallTarget(expr: MethodCallExpr): String {
+        if (expr.methodName in RANDOM_METHODS && receiverInstanceClass(expr.obj) == "Random") {
+            if (isDefaultRandom(expr.obj)) {
+                return emitDefaultRandomCall(expr.methodName, expr.args.map { emitExpression(it.toExpression()) })
+            }
+            useRuntimeHelper(RuntimeHelper.RANDOM)
+            return "${emitExpression(expr.obj)}:${expr.methodName}(${emitArgList(expr.args)})"
+        }
         if (expr.methodName == "pow" && expr.args.size == 1 && receiverInstanceClass(expr.obj) == null && !hasDeclaredMethod(expr)) {
             return "(${emitExpression(expr.obj)} ^ ${emitExpression(expr.args[0].toExpression())})"
         }
@@ -730,7 +747,15 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         return elementClasses.singleOrNull()
     }
 
-    private fun instanceClassOfExpr(expr: Expression): String? = when (expr) {
+    private fun isDefaultRandom(expr: Expression): Boolean = when (expr) {
+        is Identifier -> expr.name == "Random" && types.env.lookup("Random") == null && types.instanceClassOf("Random") == null
+        is PropertyAccessExpr -> expr.name == "Default" && isDefaultRandom(expr.obj)
+        else -> false
+    }
+
+    private fun instanceClassOfExpr(expr: Expression): String? = if (isDefaultRandom(expr)) "Random" else instanceClassOfNonRandomExpr(expr)
+
+    private fun instanceClassOfNonRandomExpr(expr: Expression): String? = when (expr) {
         is ToPairExpr -> "Pair"
         is IndexExpr -> (expr.obj as? Identifier)?.takeIf { instanceClassOfExpr(it) == "List" }?.let { types.listElementClassOf(it.name) }
         is StringTemplateLiteral -> "String"
@@ -942,6 +967,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     }
 
     private fun emitPropertyAccess(receiver: Expression, name: String): String {
+        if (isDefaultRandom(PropertyAccessExpr(receiver, name))) return emitExpression(receiver)
         if (receiver is Identifier && receiver.name == "Int" && types.env.lookup("Int") == null) {
             when (name) {
                 "MAX_VALUE" -> return "2147483647"
@@ -971,6 +997,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private fun emitIdentifier(name: String): String {
         if (name == "self") return types.currentReceiver() ?: name
         objectMemberPrefix(name, objectVars)?.let { return "$it.$name" }
+        if (isDefaultRandom(Identifier(name))) {
+            useRuntimeHelper(RuntimeHelper.RANDOM)
+            return "__Random.Default"
+        }
         if ((name == "PI" || name == "E") && types.env.lookup(name) == null && types.classInfo(name) == null) {
             return if (name == "PI") "math.pi" else "math.exp(1)"
         }
@@ -1658,6 +1688,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     }
 
     private fun emitCall(expr: CallExpr): String {
+        if (expr.callee == "Random" && expr.args.size == 1 && types.classInfo("Random")?.native == true) {
+            useRuntimeHelper(RuntimeHelper.RANDOM)
+            return "__Random.new(${emitExpression(expr.args[0].toExpression())})"
+        }
         if (expr.args.any { it is NamedArg } && types.classInfo(expr.callee) == null) {
             types.functionParamNames(expr.callee)?.let { names ->
                 val positional = expr.args.takeWhile { it !is NamedArg }
@@ -1735,6 +1769,19 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             "print" -> "io.write(${if (expr.args.isEmpty()) "\"\"" else formatForToString(expr.args[0].toExpression(), positional[0])})"
             else -> "${expr.callee}(${emitArgList(expr.args)})"
         }
+    }
+
+    /** `Random.nextInt(...)` and friends called directly on the default Random go straight to Lua's
+     * `math.random`, so no runtime helper is emitted unless a seeded Random (or the default one as a
+     * value) is actually used. */
+    private fun emitDefaultRandomCall(name: String, args: List<String>): String = when {
+        name == "nextBoolean" -> "(math.random() < 0.5)"
+        name == "nextInt" && args.isEmpty() -> "(math.random(0, 65535) * 65536 + math.random(0, 65535) - 2147483648)"
+        name == "nextInt" && args.size == 1 -> "math.random(0, ${args[0]} - 1)"
+        name == "nextInt" -> "math.random(${args[0]}, ${args[1]} - 1)"
+        args.isEmpty() -> "math.random()"
+        args.size == 1 -> "(math.random() * ${args[0]})"
+        else -> "(function(lo, hi) return lo + math.random() * (hi - lo) end)(${args[0]}, ${args[1]})"
     }
 
     /** `kotlin.math`'s top-level functions; null when [name] isn't one (or has an unexpected arity). */

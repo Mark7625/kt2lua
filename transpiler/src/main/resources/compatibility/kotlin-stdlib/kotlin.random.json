@@ -2,12 +2,12 @@
   "library": "kotlin-stdlib",
   "kotlinVersion": "2.3.0",
   "package": "kotlin.random",
-  "documentation": "Random number generation. Entirely unsupported — no Random type is wired up, even though Lua's own math.random exists natively underneath; nothing in Emitter.kt routes kotlin.random.Random to it.",
+  "documentation": "Unseeded Random / Random.Default calls compile to plain math.random with no helper code. Random(seed) is a port of Kotlin's XorWow generator (src/main/resources/runtime/random.lua), so every seeded Random is independent and produces the same sequence as the JVM.",
   "declarations": [
-    {"id": "kotlin.random.Random", "name": "Random", "kind": "type", "status": "unsupported", "limitations": ["No Random type exists in this subset; math.random() is never reachable from user Kotlin source even though it's right there in the Lua runtime"]},
-    {"id": "kotlin.random.Random.nextInt()", "name": "nextInt", "kind": "function", "receiver": "Random", "status": "unsupported"},
-    {"id": "kotlin.random.Random.nextInt(Int, Int)", "name": "nextInt", "kind": "function", "receiver": "Random", "status": "unsupported"},
-    {"id": "kotlin.random.Random.nextDouble()", "name": "nextDouble", "kind": "function", "receiver": "Random", "status": "unsupported"},
-    {"id": "kotlin.random.Random.nextBoolean()", "name": "nextBoolean", "kind": "function", "receiver": "Random", "status": "unsupported"}
+    {"id": "kotlin.random.Random", "name": "Random", "kind": "type", "status": "supported", "implementation": "Emitter.emitCall", "documentation": "Random.Default / Random → math.random; Random(seed: Int) → an independent seeded XorWow generator matching Kotlin. A Long seed is not supported"},
+    {"id": "kotlin.random.Random.nextInt()", "name": "nextInt", "kind": "function", "receiver": "Random", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Full Int range; seeded instances match Kotlin bit for bit"},
+    {"id": "kotlin.random.Random.nextInt(Int, Int)", "name": "nextInt", "kind": "function", "receiver": "Random", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "from inclusive, until exclusive; also covers nextInt(until)"},
+    {"id": "kotlin.random.Random.nextDouble()", "name": "nextDouble", "kind": "function", "receiver": "Random", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "[0, 1); also covers nextDouble(until) and nextDouble(from, until)"},
+    {"id": "kotlin.random.Random.nextBoolean()", "name": "nextBoolean", "kind": "function", "receiver": "Random", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Seeded instances match Kotlin"}
   ]
 }

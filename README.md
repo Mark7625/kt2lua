@@ -8,7 +8,8 @@
   <img src="https://img.shields.io/badge/kotlin-2.3.0-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin 2.3.0">
   <img src="https://img.shields.io/badge/lua-5.1-2C2D72?logo=lua&logoColor=white" alt="Lua 5.1">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license">
-  <!-- compat-badge:start --><img src="https://img.shields.io/badge/stdlib%20coverage-56%25-yellow" alt="Kotlin stdlib coverage"><!-- compat-badge:end -->
+  <a href="https://mvnrepository.com/artifact/io.github.mark7625/kt2lua"><img src="https://badges.mvnrepository.com/badge/io.github.mark7625/kt2lua/badge.svg?label=MvnRepository" alt="MvnRepository"></a>
+  <!-- compat-badge:start --><img src="https://img.shields.io/badge/stdlib%20coverage-58%25-yellow" alt="Kotlin stdlib coverage"><!-- compat-badge:end -->
 </p>
 
 kt2lua transpiles a small subset of Kotlin into Lua 5.1, and ships its own Lua
@@ -101,14 +102,14 @@ locally.
 | [kotlin.io](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.io/) | 0/13 | 2 | 11 | 0% |
 | [kotlin.io.path](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.io.path/) | 0/7 | 0 | 7 | 0% |
 | [kotlin.math](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.math/) | 20/20 | 0 | 0 | 100% |
-| [kotlin.random](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.random/) | 0/5 | 0 | 5 | 0% |
+| [kotlin.random](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.random/) | 5/5 | 0 | 0 | 100% |
 | [kotlin.ranges](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.ranges/) | 0/6 | 4 | 2 | 0% |
 | [kotlin.sequences](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.sequences/) | 22/26 | 4 | 0 | 84% |
 | [kotlin.streams](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.streams/) | 0/2 | 0 | 2 | 0% |
 | [kotlin.system](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.system/) | 0/4 | 0 | 4 | 0% |
 | [kotlin.text](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.text/) | 5/29 | 1 | 23 | 17% |
 | [kotlin.time](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/) | 0/6 | 0 | 6 | 0% |
-| **Total** | **165/292** | **51** | **76** | **56%** |
+| **Total** | **170/292** | **51** | **71** | **58%** |
 
 _Done = fully implemented; Partial = implemented with a real caveat, not counted toward % Complete; Left = not started at all. See the tracking issue for exactly what each partial entry is missing._
 <!-- compat-report:end -->
