@@ -80,7 +80,7 @@ private val COLLECTION_TYPE_ALIASES = mapOf(
     // A range value is the Lua list of its integers; a floating-point range is just its two bounds.
     "IntRange" to "List", "LongRange" to "List", "UIntRange" to "List", "ULongRange" to "List",
     "IntProgression" to "List", "LongProgression" to "List", "UIntProgression" to "List", "ULongProgression" to "List",
-    "ClosedRange" to "List", "OpenEndRange" to "List", "ClosedFloatingPointRange" to "FloatRange",
+    "ClosedRange" to "List", "CharRange" to "List", "CharProgression" to "List", "OpenEndRange" to "List", "ClosedFloatingPointRange" to "FloatRange",
 )
 
 /** `val callbacks = mapOf(...)` — an unannotated property's [rawType] is empty, so a Map/Set/List
@@ -265,6 +265,7 @@ class TypeAnalyzer {
         is IntLiteral -> TypeName.INT
         is DoubleLiteral -> TypeName.DOUBLE
         is BooleanLiteral -> TypeName.BOOLEAN
+        is CharLiteral -> TypeName.CHAR
         NullLiteral -> TypeName.ANY
         is StringTemplateLiteral -> TypeName.STRING
         is Identifier -> env.lookup(expr.name) ?: if (expr.name == "PI" || expr.name == "E") TypeName.DOUBLE else TypeName.ANY
@@ -276,6 +277,7 @@ class TypeAnalyzer {
             ?: when {
                 classOfExpr(expr.obj) != null -> TypeName.ANY
                 expr.name == "absoluteValue" -> inferExprType(expr.obj)
+                expr.name == "code" -> TypeName.INT
                 expr.name == "ulp" -> TypeName.DOUBLE
                 else -> TypeName.ANY
             }
@@ -310,6 +312,7 @@ class TypeAnalyzer {
         if (expr.args.isEmpty() && (expr.methodName == "roundToInt" || expr.methodName == "roundToLong")) return TypeName.INT
         if (classOfExpr(expr.obj) == null && expr.methodName in setOf("nextUp", "nextDown", "nextTowards", "withSign", "IEEErem")) return TypeName.DOUBLE
         if (expr.args.size == 1 && expr.methodName == "pow" && classOfExpr(expr.obj) == null) return TypeName.DOUBLE
+        if (expr.args.isEmpty() && expr.methodName == "toChar" && classOfExpr(expr.obj) == null) return TypeName.CHAR
         if (expr.methodName in setOf("coerceAtLeast", "coerceAtMost", "coerceIn") && classOfExpr(expr.obj) == null) return inferExprType(expr.obj)
         val raw = classOfExpr(expr.obj)?.let { classes[it]?.methodReturnTypes?.get(expr.methodName) } ?: return TypeName.ANY
         return normalizeType(raw)
@@ -325,6 +328,8 @@ class TypeAnalyzer {
         if (expr.op in setOf("==", "!=", "<", ">", "<=", ">=", "&&", "||", "in", "!in")) return TypeName.BOOLEAN
         val lt = inferExprType(expr.left)
         val rt = inferExprType(expr.right)
+        if (lt == TypeName.CHAR && expr.op == "+") return TypeName.CHAR
+        if (lt == TypeName.CHAR && expr.op == "-") return if (rt == TypeName.CHAR) TypeName.INT else TypeName.CHAR
         if (expr.op == "+" && (lt == TypeName.STRING || rt == TypeName.STRING)) return TypeName.STRING
         if (lt == TypeName.DOUBLE || rt == TypeName.DOUBLE) return TypeName.DOUBLE
         return TypeName.INT

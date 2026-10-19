@@ -1,11 +1,12 @@
 package kt2lua.transpiler
 
-enum class TypeName { INT, DOUBLE, STRING, BOOLEAN, UNIT, ANY }
+enum class TypeName { INT, DOUBLE, STRING, BOOLEAN, UNIT, ANY, CHAR }
 
 fun normalizeType(name: String): TypeName = when (name) {
     "Int", "Long", "Short", "Byte" -> TypeName.INT
     "Double", "Float" -> TypeName.DOUBLE
     "String" -> TypeName.STRING
+    "Char" -> TypeName.CHAR
     "Boolean" -> TypeName.BOOLEAN
     "Unit" -> TypeName.UNIT
     else -> TypeName.ANY
@@ -153,6 +154,9 @@ sealed class Expression
 data class IntLiteral(val value: Int) : Expression()
 data class DoubleLiteral(val value: Double) : Expression()
 data class BooleanLiteral(val value: Boolean) : Expression()
+
+/** `'a'`: a Char is a one-character Lua string, so it prints, compares and concatenates like one. */
+data class CharLiteral(val value: Char) : Expression()
 object NullLiteral : Expression()
 data class StringTemplateLiteral(val parts: List<TemplateExprPart>) : Expression()
 

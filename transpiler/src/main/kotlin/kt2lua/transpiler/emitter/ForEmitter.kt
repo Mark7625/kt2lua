@@ -10,22 +10,26 @@ import kt2lua.transpiler.TypeName
  * iteration) are two different AST nodes for the same Kotlin keyword, so both live here. */
 object ForEmitter {
     fun emitForStatement(stmt: ForStatement, ctx: EmitContext) {
-        val startStr = ctx.emitExpression(stmt.start)
-        val limitStr = if (stmt.inclusive) ctx.emitExpression(stmt.end) else "(${ctx.emitExpression(stmt.end)} - 1)"
+        val isChar = ctx.types.inferExprType(stmt.start) == TypeName.CHAR
+        val startStr = ctx.emitExpression(stmt.start).let { if (isChar) "string.byte($it)" else it }
+        val endStr = ctx.emitExpression(stmt.end).let { if (isChar) "string.byte($it)" else it }
+        val limitStr = if (stmt.inclusive) endStr else "($endStr - 1)"
+        val loopVar = if (isChar) "__b" else stmt.varName
         val stepStr = when {
             stmt.descending && stmt.step != null -> "-(${ctx.emitExpression(stmt.step!!)})"
             stmt.descending -> "-1"
             else -> stmt.step?.let { ctx.emitExpression(it) }
         }
         val header = if (stepStr != null) {
-            "for ${stmt.varName} = $startStr, $limitStr, $stepStr do"
+            "for $loopVar = $startStr, $limitStr, $stepStr do"
         } else {
-            "for ${stmt.varName} = $startStr, $limitStr do"
+            "for $loopVar = $startStr, $limitStr do"
         }
         ctx.line(header)
         ctx.pushIndent()
         ctx.types.pushScope()
-        ctx.types.env.declare(stmt.varName, TypeName.INT)
+        ctx.types.env.declare(stmt.varName, if (isChar) TypeName.CHAR else TypeName.INT)
+        if (isChar) ctx.line("local ${stmt.varName} = string.char(__b)")
         stmt.body.body.forEach { ctx.emitStatement(it) }
         ctx.types.popScope()
         ctx.popIndent()

@@ -965,6 +965,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     override fun emitExpression(expr: Expression): String = when (expr) {
         is IntLiteral -> expr.value.toString()
         is DoubleLiteral -> formatDouble(expr.value)
+        is CharLiteral -> quoteLuaString(expr.value.toString(), style.quoteStyle)
         is BooleanLiteral -> expr.value.toString()
         NullLiteral -> "nil"
         is Identifier -> emitIdentifier(expr.name)
@@ -995,6 +996,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         if (name in setOf("first", "last") && receiverInstanceClass(receiver) == "List") {
             return inlineOnce(listOf(receiver), listOf(emitExpression(receiver))) { (t) -> if (name == "first") "$t[1]" else "$t[#$t]" }
         }
+        if (name == "code" && receiverInstanceClass(receiver) == null) return "string.byte(${emitExpression(receiver)})"
         if (name == "absoluteValue" && receiverInstanceClass(receiver) == null) return "math.abs(${emitExpression(receiver)})"
         if (name == "ulp" && receiverInstanceClass(receiver) == null) {
             useRuntimeHelper(RuntimeHelper.MATH_FLOAT)
@@ -1692,7 +1694,9 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             "+" -> when (receiverInstanceClass(expr.left)) {
                 "List" -> emitListPlusExpr(leftStr, expr.right, rightStr)
                 "Set" -> emitSetPlusMinusExpr(leftStr, expr.right, rightStr, removing = false)
-                else -> if (types.inferExprType(expr.left) == TypeName.STRING || types.inferExprType(expr.right) == TypeName.STRING) {
+                else -> if (types.inferExprType(expr.left) == TypeName.CHAR) {
+                    "string.char(string.byte($leftStr) + $rightStr)"
+                } else if (types.inferExprType(expr.left) == TypeName.STRING || types.inferExprType(expr.right) == TypeName.STRING) {
                     "(${concatOperand(expr.left, leftStr)} .. ${concatOperand(expr.right, rightStr)})"
                 } else {
                     "($leftStr + $rightStr)"
@@ -1701,7 +1705,9 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             "-" -> when (receiverInstanceClass(expr.left)) {
                 "List" -> emitListMinusExpr(leftStr, expr.right, rightStr)
                 "Set" -> emitSetPlusMinusExpr(leftStr, expr.right, rightStr, removing = true)
-                else -> "($leftStr - $rightStr)"
+                else -> if (types.inferExprType(expr.left) != TypeName.CHAR) "($leftStr - $rightStr)"
+                    else if (types.inferExprType(expr.right) == TypeName.CHAR) "(string.byte($leftStr) - string.byte($rightStr))"
+                    else "string.char(string.byte($leftStr) - $rightStr)"
             }
             "/" -> {
                 val lt = types.inferExprType(expr.left)
@@ -1855,12 +1861,17 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     /** An integer range is the Lua list of its values; a floating-point one only has its two bounds. */
     private fun emitRangeExpr(expr: RangeExpr): String {
         if (isFloatRange(expr)) return "{start = ${emitExpression(expr.start)}, endInclusive = ${emitExpression(expr.end)}}"
-        val limit = if (expr.inclusive) emitExpression(expr.end) else "(${emitExpression(expr.end)} - 1)"
+        val isChar = types.inferExprType(expr.start) == TypeName.CHAR
+        val endStr = if (isChar) "string.byte(${emitExpression(expr.end)})" else emitExpression(expr.end)
+        val limit = if (expr.inclusive) endStr else "($endStr - 1)"
         val step = when {
             expr.step != null && expr.descending -> ", -(${emitExpression(expr.step)})"
             expr.step != null -> ", ${emitExpression(expr.step)}"
             expr.descending -> ", -1"
             else -> ""
+        }
+        if (isChar) {
+            return "(function() local __r = {} for __i = string.byte(${emitExpression(expr.start)}), $limit$step do __r[#__r + 1] = string.char(__i) end return __r end)()"
         }
         return "(function() local __r = {} for __i = ${emitExpression(expr.start)}, $limit$step do __r[#__r + 1] = __i end return __r end)()"
     }
@@ -1943,6 +1954,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                 inlineOnce(listOf(expr.obj, expr.args[0].toExpression()), listOf(receiver, args[0])) { (x, sign) ->
                     "(($sign < 0 or 1 / $sign < 0) and -math.abs($x) or math.abs($x))"
                 }
+            expr.methodName == "toChar" && args.isEmpty() -> "string.char($receiver)"
             expr.methodName == "coerceAtLeast" && args.size == 1 -> "math.max($receiver, ${args[0]})"
             expr.methodName == "coerceAtMost" && args.size == 1 -> "math.min($receiver, ${args[0]})"
             expr.methodName == "coerceIn" && args.size == 2 -> "math.min(math.max($receiver, ${args[0]}), ${args[1]})"

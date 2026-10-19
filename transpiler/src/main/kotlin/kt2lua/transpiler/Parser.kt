@@ -270,7 +270,7 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
     }
 
     private fun canStartExpression(): Boolean = when (current().type) {
-        TokenType.INT_LITERAL, TokenType.DOUBLE_LITERAL, TokenType.STRING_TEMPLATE,
+        TokenType.INT_LITERAL, TokenType.DOUBLE_LITERAL, TokenType.STRING_TEMPLATE, TokenType.CHAR_LITERAL,
         TokenType.TRUE, TokenType.FALSE, TokenType.NULL, TokenType.IDENTIFIER, TokenType.LPAREN,
         TokenType.MINUS, TokenType.NOT, TokenType.PLUS, TokenType.IF, TokenType.WHEN, TokenType.THIS,
         TokenType.DOUBLE_COLON, TokenType.LBRACE -> true
@@ -468,6 +468,9 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
             }
             TokenType.STRING_TEMPLATE -> {
                 advance(); buildTemplateLiteral(tok.templateParts!!)
+            }
+            TokenType.CHAR_LITERAL -> {
+                advance(); CharLiteral(tok.text!![0])
             }
             TokenType.LPAREN -> {
                 advance()

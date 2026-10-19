@@ -197,7 +197,7 @@ private fun collectFreeNames(cond: WhenCondition, out: MutableSet<String>) {
 
 private fun collectFreeNames(expr: Expression, out: MutableSet<String>) {
     when (expr) {
-        is IntLiteral, is DoubleLiteral, is BooleanLiteral, is NullLiteral -> {}
+        is IntLiteral, is DoubleLiteral, is BooleanLiteral, is NullLiteral, is CharLiteral -> {}
         is StringTemplateLiteral -> for (part in expr.parts) when (part) {
             is TemplateExprPart.Text -> {}
             is TemplateExprPart.Expr -> collectFreeNames(part.expr, out)
