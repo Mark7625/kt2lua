@@ -1,4 +1,4 @@
-import kotlin.random.Random
+import kotlin.random.*
 
 fun rollDie(rng: Random): Int = rng.nextInt(1, 7)
 
@@ -34,6 +34,42 @@ fun main() {
     second.nextInt()
     second.nextInt()
     println(first.nextInt() == Random(7).nextInt())
+
+    val unsigned = Random(99)
+    println(unsigned.nextUInt())
+    println(unsigned.nextUInt())
+    println(unsigned.nextUInt(10u))
+    println(unsigned.nextUInt(5u, 15u))
+    println(unsigned.nextUBytes(7).toList())
+    println(unsigned.nextUBytes(4).size)
+    println(Random(5).nextUBytes(10).toList())
+
+    val ranged = Random(7)
+    println(ranged.nextInt(1..6))
+    println(ranged.nextInt(10 until 20))
+    println(ranged.nextInt(0..0))
+    println(ranged.asJavaRandom().nextInt(10) < 10)
+
+    var longOk = true
+    var longRangeOk = true
+    var untilOk = true
+    for (i in 1..200) {
+        val v = Random.nextLong(100L)
+        if (v < 0L || v >= 100L) longOk = false
+        val w = Random.nextLong(5L, 10L)
+        if (w < 5L || w >= 10L) longRangeOk = false
+        val u = Random.nextUInt(3u, 6u)
+        if (u < 3u || u >= 6u) untilOk = false
+    }
+    println(longOk)
+    println(longRangeOk)
+    println(untilOk)
+    println(Random.nextLong(1L..3L) <= 3L)
+    println(Random.nextULong(10uL) < 10uL)
+    println(Random.nextUBytes(6).size)
+    println(Random.nextInt(1..6) in 1..6)
+    println(Random.nextULong() >= 0uL)
+    println(Random.nextBoolean() || true)
 
     var allInRange = true
     var sawLow = false

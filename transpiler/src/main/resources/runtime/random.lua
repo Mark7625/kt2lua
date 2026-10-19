@@ -1,7 +1,8 @@
 -- kotlin.random.Random. Random(seed) is a port of Kotlin's own XorWow generator on top of 32-bit
 -- arithmetic done with doubles (Lua 5.1 has no integer type or bit operators), so every seeded
 -- Random is independent and produces exactly the sequence the JVM would. The unseeded
--- Random / Random.Default just wraps math.random.
+-- Random / Random.Default just wraps math.random. nextLong / nextULong draw from a 53-bit range
+-- (Lua numbers are doubles), so a seeded sequence of those is not the JVM's.
 
 local __Random = {}
 __Random.__index = __Random
@@ -112,6 +113,46 @@ end
 function __Random:nextBoolean()
   if self.default then return math.random() < 0.5 end
   return self:_bits(1) ~= 0
+end
+
+function __Random:nextUInt(a, b)
+  if a == nil then
+    if self.default then return math.random(0, 65535) * 65536 + math.random(0, 65535) end
+    return self:_next()
+  end
+  if b == nil then a, b = 0, a end
+  return self:nextInt(a, b)
+end
+
+function __Random:nextLong(a, b)
+  if a == nil then return math.floor(self:nextDouble() * 9007199254740992) - 4503599627370496 end
+  if b == nil then a, b = 0, a end
+  return math.floor(self:nextDouble() * (b - a)) + a
+end
+
+function __Random:nextULong(a, b)
+  if a == nil then return math.floor(self:nextDouble() * 9007199254740992) end
+  return self:nextLong(a, b)
+end
+
+function __Random:nextUBytes(n)
+  local bytes = {}
+  if self.default then
+    for i = 1, n do bytes[i] = math.random(0, 255) end
+    return bytes
+  end
+  local position = 0
+  for _ = 1, math.floor(n / 4) do
+    local v = self:_next()
+    for k = 0, 3 do bytes[position + k + 1] = math.floor(v / 2 ^ (8 * k)) % 256 end
+    position = position + 4
+  end
+  local remainder = n - position
+  if remainder > 0 then
+    local vr = self:_bits(remainder * 8)
+    for k = 0, remainder - 1 do bytes[position + k + 1] = math.floor(vr / 2 ^ (8 * k)) % 256 end
+  end
+  return bytes
 end
 
 __Random.Default = setmetatable({default = true}, __Random)

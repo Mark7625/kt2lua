@@ -5,15 +5,15 @@
   "documentation": "Unseeded Random / Random.Default calls compile to plain math.random with no helper code. Random(seed) is a port of Kotlin's XorWow generator (src/main/resources/runtime/random.lua), so every seeded Random is independent and produces the same sequence as the JVM.",
   "declarations": [
     {"id": "kotlin.random.Random", "name": "Random", "kind": "type", "status": "supported", "implementation": "Emitter.emitCall", "documentation": "Random.Default / Random → math.random; Random(seed: Int) → an independent seeded XorWow generator matching Kotlin. A Long seed is not supported"},
-    {"id": "kotlin.random.Random.nextInt()", "name": "nextInt", "kind": "function", "receiver": "Random", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Full Int range; seeded instances match Kotlin bit for bit"},
-    {"id": "kotlin.random.Random.nextInt(Int, Int)", "name": "nextInt", "kind": "function", "receiver": "Random", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "from inclusive, until exclusive; also covers nextInt(until)"},
+    {"id": "kotlin.random.Random.nextInt()", "name": "nextInt", "kind": "function", "receiver": "Random", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Full Int range; seeded instances match Kotlin bit for bit. Also accepts a range argument, nextInt(1..6)"},
+    {"id": "kotlin.random.Random.nextInt(Int, Int)", "name": "nextInt", "kind": "function", "receiver": "Random", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "from inclusive, until exclusive; also covers nextInt(until). Also accepts a range argument, nextInt(1..6)"},
     {"id": "kotlin.random.Random.nextDouble()", "name": "nextDouble", "kind": "function", "receiver": "Random", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "[0, 1); also covers nextDouble(until) and nextDouble(from, until)"},
     {"id": "kotlin.random.Random.nextBoolean()", "name": "nextBoolean", "kind": "function", "receiver": "Random", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Seeded instances match Kotlin"},
-    {"id": "kotlin.random.asJavaRandom(*)", "name": "asJavaRandom", "kind": "function", "status": "unsupported"},
-    {"id": "kotlin.random.asKotlinRandom(*)", "name": "asKotlinRandom", "kind": "function", "status": "unsupported"},
-    {"id": "kotlin.random.nextLong(*)", "name": "nextLong", "kind": "function", "status": "unsupported"},
-    {"id": "kotlin.random.nextUBytes(*)", "name": "nextUBytes", "kind": "function", "status": "unsupported"},
-    {"id": "kotlin.random.nextUInt(*)", "name": "nextUInt", "kind": "function", "status": "unsupported"},
-    {"id": "kotlin.random.nextULong(*)", "name": "nextULong", "kind": "function", "status": "unsupported"}
+    {"id": "kotlin.random.asJavaRandom(*)", "name": "asJavaRandom", "kind": "function", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Identity: there is only one Random type"},
+    {"id": "kotlin.random.asKotlinRandom(*)", "name": "asKotlinRandom", "kind": "function", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Identity: there is only one Random type"},
+    {"id": "kotlin.random.nextLong(*)", "name": "nextLong", "kind": "function", "status": "supported", "implementation": "Emitter.emitDefaultRandomCall", "documentation": "Direct math.random; the no-argument form spans +-2^52 because Lua numbers are doubles. Also accepts nextLong(until), nextLong(from, until) and a range argument"},
+    {"id": "kotlin.random.nextUBytes(*)", "name": "nextUBytes", "kind": "function", "status": "supported", "implementation": "Emitter.emitDefaultRandomCall", "documentation": "A Lua array of random bytes (used as a List); a seeded Random matches the JVM sequence"},
+    {"id": "kotlin.random.nextUInt(*)", "name": "nextUInt", "kind": "function", "status": "supported", "implementation": "Emitter.emitDefaultRandomCall", "documentation": "Direct math.random; a seeded Random matches the JVM sequence. Also accepts nextUInt(until), nextUInt(from, until) and a range argument"},
+    {"id": "kotlin.random.nextULong(*)", "name": "nextULong", "kind": "function", "status": "supported", "implementation": "Emitter.emitDefaultRandomCall", "documentation": "Direct math.random; the no-argument form spans 0..2^53 because Lua numbers are doubles. Also accepts nextULong(until), nextULong(from, until) and a range argument"}
   ]
 }

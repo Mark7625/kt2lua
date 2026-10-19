@@ -20,7 +20,7 @@ private val MULTIPLICATIVE_OPS = mapOf(
 )
 
 /** Index into [Parser.binaryLevels] for the additive level — see [Parser.parseAdditive]. */
-private const val ADDITIVE_LEVEL = 7
+private const val ADDITIVE_LEVEL = 8
 
 /** One precedence level of this subset's binary operators, loosest-binding first. [matchOp]
  * recognizes and consumes this level's operator at the current token, or returns null without
@@ -293,6 +293,17 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
         return null
     }
 
+    /** `a..b`, `a until b`, `a downTo b`. */
+    private fun matchRangeOp(): String? {
+        if (match(TokenType.DOT_DOT)) return ".."
+        if (match(TokenType.UNTIL)) return "until"
+        if (check(TokenType.IDENTIFIER) && current().text == "downTo") {
+            advance()
+            return "downTo"
+        }
+        return null
+    }
+
     /** `x !in xs` — `!` and `in` as two separate tokens (unlike `!=`), only recognized here in
      * infix position so it can't be confused with a unary `!` at the start of an operand. A
      * membership operator starting a new line is never a continuation: in a `when`, it begins the
@@ -310,7 +321,7 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
     }
 
     /** Loosest-to-tightest, matching real Kotlin's relative precedence: `||`, `&&`, `==`/`!=`,
-     * `<`/`>`/`<=`/`>=`, `in`/`!in`, `?:`, `to`, `+`/`-`, `*`/`/`/`%`. */
+     * `<`/`>`/`<=`/`>=`, `in`/`!in`, `?:`, `to`, `..`/`until`/`downTo`, `+`/`-`, `*`/`/`/`%`. */
     private val binaryLevels: List<BinaryLevel> = listOf(
         BinaryLevel({ if (match(TokenType.OR_OR)) "||" else null }),
         BinaryLevel({ if (match(TokenType.AND_AND)) "&&" else null }),
@@ -319,6 +330,7 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
         BinaryLevel({ matchInOp() }),
         BinaryLevel({ if (match(TokenType.ELVIS)) "?:" else null }, build = { _, l, r -> ElvisExpr(l, r) }),
         BinaryLevel({ matchInfixTo() }, build = { _, l, r -> ToPairExpr(l, r) }),
+        BinaryLevel({ matchRangeOp() }, build = { op, l, r -> RangeExpr(l, r, inclusive = op != "until", descending = op == "downTo") }),
         BinaryLevel({ matchTokenOp(ADDITIVE_OPS) }),
         BinaryLevel({ matchTokenOp(MULTIPLICATIVE_OPS) }),
     )

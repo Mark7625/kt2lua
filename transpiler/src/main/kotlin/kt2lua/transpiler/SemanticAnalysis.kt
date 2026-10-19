@@ -289,6 +289,7 @@ class TypeAnalyzer {
         is LambdaExpr -> TypeName.ANY
         is IndexExpr -> TypeName.ANY
         is ToPairExpr -> TypeName.ANY
+        is RangeExpr -> TypeName.ANY
     }
 
     private fun classOfExpr(expr: Expression): String? = when (expr) {

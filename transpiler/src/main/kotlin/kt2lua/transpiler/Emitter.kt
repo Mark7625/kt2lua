@@ -82,7 +82,7 @@ import kt2lua.transpiler.stdlib.registry.CollectionLoweringContext
 import kt2lua.transpiler.stdlib.registry.OperationCall
 import kt2lua.transpiler.stdlib.registry.OperationRegistry
 
-private val RANDOM_METHODS = setOf("nextInt", "nextDouble", "nextBoolean")
+private val RANDOM_METHODS = setOf("nextInt", "nextDouble", "nextBoolean", "nextLong", "nextUInt", "nextULong", "nextUBytes", "asJavaRandom", "asKotlinRandom")
 
 private fun formatDouble(value: Double): String =
     if (value == Math.floor(value) && !value.isInfinite()) {
@@ -216,7 +216,11 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             "Random",
             ClassInfo(
                 emptyList(), RANDOM_METHODS, false,
-                methodReturnTypes = mapOf("nextInt" to "Int", "nextDouble" to "Double", "nextBoolean" to "Boolean"),
+                methodReturnTypes = mapOf(
+                    "nextInt" to "Int", "nextDouble" to "Double", "nextBoolean" to "Boolean", "nextLong" to "Long",
+                    "nextUInt" to "Int", "nextULong" to "Long", "nextUBytes" to "List",
+                    "asJavaRandom" to "Random", "asKotlinRandom" to "Random",
+                ),
                 native = true,
             ),
         )
@@ -436,11 +440,11 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
 
     private fun emitMethodCallTarget(expr: MethodCallExpr): String {
         if (expr.methodName in RANDOM_METHODS && receiverInstanceClass(expr.obj) == "Random") {
-            if (isDefaultRandom(expr.obj)) {
-                return emitDefaultRandomCall(expr.methodName, expr.args.map { emitExpression(it.toExpression()) })
-            }
+            if (expr.methodName == "asJavaRandom" || expr.methodName == "asKotlinRandom") return emitExpression(expr.obj)
+            val (argStrs, argExprs) = randomArguments(expr.args)
+            if (isDefaultRandom(expr.obj)) return emitDefaultRandomCall(expr.methodName, argStrs, argExprs)
             useRuntimeHelper(RuntimeHelper.RANDOM)
-            return "${emitExpression(expr.obj)}:${expr.methodName}(${emitArgList(expr.args)})"
+            return "${emitExpression(expr.obj)}:${expr.methodName}(${argStrs.joinToString(", ")})"
         }
         if (expr.methodName == "pow" && expr.args.size == 1 && receiverInstanceClass(expr.obj) == null && !hasDeclaredMethod(expr)) {
             return "(${emitExpression(expr.obj)} ^ ${emitExpression(expr.args[0].toExpression())})"
@@ -761,6 +765,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
 
     private fun instanceClassOfNonRandomExpr(expr: Expression): String? = when (expr) {
         is ToPairExpr -> "Pair"
+        is RangeExpr -> "List"
         is IndexExpr -> (expr.obj as? Identifier)?.takeIf { instanceClassOfExpr(it) == "List" }?.let { types.listElementClassOf(it.name) }
         is StringTemplateLiteral -> "String"
         is Identifier -> {
@@ -799,7 +804,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             if (expr.methodName == "new" && expressionPath(expr.obj)?.let { nativeFactory(it) } != null) {
                 bindings.type(expressionPath(expr.obj)!!)
             } else receiverInstanceClass(expr.obj)?.let { receiverClass ->
-                if (receiverClass == RESULT_CLASS && expr.methodName in setOf("onSuccess", "onFailure")) RESULT_CLASS
+                if (receiverClass == "Random") types.methodReturnClass("Random", expr.methodName)
+                else if (receiverClass == RESULT_CLASS && expr.methodName in setOf("onSuccess", "onFailure")) RESULT_CLASS
                 else if (receiverClass in setOf("List", "Set", "Map", "Sequence")) collectionMethodResultKind(receiverClass, expr)
                 else if (types.classInfo(receiverClass)?.native == true) bindings.method(receiverClass, expr.methodName)?.second
                 else types.methodReturnClass(receiverClass, expr.methodName)
@@ -966,6 +972,11 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         is LambdaExpr -> emitLambda(expr)
         is IndexExpr -> emitIndex(expr)
         is ToPairExpr -> "{first = ${emitExpression(expr.first)}, second = ${emitExpression(expr.second)}}"
+        is RangeExpr -> {
+            val limit = if (expr.inclusive) emitExpression(expr.end) else "(${emitExpression(expr.end)} - 1)"
+            val step = if (expr.descending) ", -1" else ""
+            "(function() local __r = {} for __i = ${emitExpression(expr.start)}, $limit$step do __r[#__r + 1] = __i end return __r end)()"
+        }
     }
 
     private fun emitPropertyAccess(receiver: Expression, name: String): String {
@@ -1660,8 +1671,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                 isAutoDataClass(expr.left) -> "(tostring($leftStr) ~= tostring($rightStr))"
                 else -> "($leftStr ~= $rightStr)"
             }
-            "in" -> emitContains(expr.right, rightStr, leftStr, expr.left)
-            "!in" -> "(not ${emitContains(expr.right, rightStr, leftStr, expr.left)})"
+            "in" -> inRangeOrContains(expr, leftStr, rightStr)
+            "!in" -> "(not ${inRangeOrContains(expr, leftStr, rightStr)})"
             "+" -> when (receiverInstanceClass(expr.left)) {
                 "List" -> emitListPlusExpr(leftStr, expr.right, rightStr)
                 "Set" -> emitSetPlusMinusExpr(leftStr, expr.right, rightStr, removing = false)
@@ -1779,14 +1790,57 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     /** `Random.nextInt(...)` and friends called directly on the default Random go straight to Lua's
      * `math.random`, so no runtime helper is emitted unless a seeded Random (or the default one as a
      * value) is actually used. */
-    private fun emitDefaultRandomCall(name: String, args: List<String>): String = when {
-        name == "nextBoolean" -> "(math.random() < 0.5)"
-        name == "nextInt" && args.isEmpty() -> "(math.random(0, 65535) * 65536 + math.random(0, 65535) - 2147483648)"
-        name == "nextInt" && args.size == 1 -> "math.random(0, ${args[0]} - 1)"
-        name == "nextInt" -> "math.random(${args[0]}, ${args[1]} - 1)"
-        args.isEmpty() -> "math.random()"
-        args.size == 1 -> "(math.random() * ${args[0]})"
-        else -> "(function(lo, hi) return lo + math.random() * (hi - lo) end)(${args[0]}, ${args[1]})"
+    /** A range argument (`nextInt(1..6)`) becomes its two bounds, end-exclusive like `nextInt(from, until)`. */
+    private fun randomArguments(args: List<CallArg>): Pair<List<String>, List<Expression>> {
+        val strs = mutableListOf<String>()
+        val exprs = mutableListOf<Expression>()
+        for (arg in args) {
+            val e = arg.toExpression()
+            if (e is RangeExpr && !e.descending) {
+                strs += emitExpression(e.start)
+                exprs += e.start
+                val end = emitExpression(e.end)
+                strs += if (e.inclusive) "($end + 1)" else end
+                exprs += if (e.inclusive) BinaryExpr("+", e.end, IntLiteral(1)) else e.end
+            } else {
+                strs += emitExpression(e)
+                exprs += e
+            }
+        }
+        return strs to exprs
+    }
+
+    /** Calls on the default Random go straight to Lua's `math.random`, so no runtime helper is emitted
+     * unless a seeded Random (or the default one as a value) is actually used. */
+    private fun emitDefaultRandomCall(name: String, args: List<String>, exprs: List<Expression>): String {
+        val whole = "(math.random(0, 65535) * 65536 + math.random(0, 65535))"
+        val bits53 = "(math.random(0, 67108863) * 134217728 + math.random(0, 134217727))"
+        return when {
+            name == "nextBoolean" -> "(math.random() < 0.5)"
+            name == "nextInt" && args.isEmpty() -> "($whole - 2147483648)"
+            name == "nextInt" && args.size == 1 -> "math.random(0, ${args[0]} - 1)"
+            name == "nextInt" -> "math.random(${args[0]}, ${args[1]} - 1)"
+            name == "nextDouble" && args.isEmpty() -> "math.random()"
+            name == "nextDouble" && args.size == 1 -> "(math.random() * ${args[0]})"
+            name == "nextDouble" -> inlineOnce(exprs, args) { (lo, hi) -> "($lo + math.random() * ($hi - $lo))" }
+            name == "nextUInt" && args.isEmpty() -> whole
+            name == "nextLong" && args.isEmpty() -> "($bits53 - 4503599627370496)"
+            name == "nextULong" && args.isEmpty() -> bits53
+            name in setOf("nextUInt", "nextLong", "nextULong") && args.size == 1 -> "math.floor(math.random() * ${args[0]})"
+            name in setOf("nextUInt", "nextLong", "nextULong") -> inlineOnce(exprs, args) { (lo, hi) -> "(math.floor(math.random() * ($hi - $lo)) + $lo)" }
+            name == "nextUBytes" -> "(function(n) local t = {} for i = 1, n do t[i] = math.random(0, 255) end return t end)(${args[0]})"
+            else -> error("Unsupported Random call $name")
+        }
+    }
+
+    /** `x in a..b` compares against the bounds instead of building the range as a list. */
+    private fun inRangeOrContains(expr: BinaryExpr, leftStr: String, rightStr: String): String {
+        val range = (expr.right as? RangeExpr)?.takeIf { !it.descending }
+            ?: return emitContains(expr.right, rightStr, leftStr, expr.left)
+        val upper = if (range.inclusive) "<=" else "<"
+        return inlineOnce(listOf(expr.left), listOf(leftStr)) { (x) ->
+            "($x >= ${emitExpression(range.start)} and $x $upper ${emitExpression(range.end)})"
+        }
     }
 
     /** An inline Lua expression built from [build], which may use its argument several times: a
