@@ -13,7 +13,8 @@ enum class RuntimeHelper(resource: String) {
     EXCEPTION("exception"),
     MATH_FLOAT("math_float"),
     MATH_PRECISE("math_precise"),
-    RANDOM("random");
+    RANDOM("random"),
+    TIME("time");
 
     val source: String = loadRuntimeSource(resource)
 }

@@ -3,6 +3,7 @@ package kt2lua.transpiler.emitter
 import kt2lua.transpiler.ClassDecl
 import kt2lua.transpiler.EmitContext
 import kt2lua.transpiler.FunctionDecl
+import kt2lua.transpiler.RuntimeHelper
 
 /**
  * `class Name(...) [: Super(args)] { ... }` emission — see [ClassDecl]'s doc comment (in
@@ -11,6 +12,7 @@ import kt2lua.transpiler.FunctionDecl
  */
 object ClassEmitter {
     fun emitClassDecl(decl: ClassDecl, ctx: EmitContext) {
+        if (decl.superClass == "AbstractLongTimeSource" || decl.superClass == "AbstractDoubleTimeSource") ctx.useRuntimeHelper(RuntimeHelper.TIME)
         if (decl.superClass != null) {
             ctx.line("${decl.name} = setmetatable({}, { __index = ${decl.superClass} })")
         } else {

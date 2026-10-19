@@ -23,11 +23,11 @@ class CompatIssueTest {
 
     @Test
     fun `an unambiguous unsupported declaration produces a pre-filled GitHub issue URL`() {
-        runCompatCommand(arrayOf("compat", "issue", "AbstractDoubleTimeSource"))
+        runCompatCommand(arrayOf("compat", "issue", "copyToRecursively"))
         val output = captured.toString()
-        assertTrue(output.contains("Support kotlin.time.AbstractDoubleTimeSource"))
+        assertTrue(output.contains("Support kotlin.io.path.copyToRecursively"))
         assertTrue(output.contains("https://github.com/Mark7625/kt2lua/issues/new?"))
-        assertTrue(output.contains("title=Support+kotlin.time.AbstractDoubleTimeSource"))
+        assertTrue(output.contains("title=Support+kotlin.io.path.copyToRecursively"))
         assertTrue(output.contains("labels=compatibility"))
     }
 

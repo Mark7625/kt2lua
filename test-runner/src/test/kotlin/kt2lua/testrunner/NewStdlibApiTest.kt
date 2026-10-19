@@ -16,6 +16,47 @@ class NewStdlibApiTest {
     }
 
     @Test
+    fun `AbstractDoubleTimeSource reads its unit and marks measure against it`() {
+        val out = output(
+            """
+            import kotlin.time.AbstractDoubleTimeSource
+            import kotlin.time.DurationUnit
+
+            class HalfSeconds : AbstractDoubleTimeSource(DurationUnit.SECONDS) {
+                var ticks = 0.0
+                override fun read(): Double = ticks / 2
+            }
+
+            fun main() {
+                val clock = HalfSeconds()
+                val mark = clock.markNow()
+                clock.ticks = 5.0
+                println(mark.elapsedNow())
+                clock.ticks = 7.0
+                println(mark.elapsedNow().inWholeMilliseconds)
+            }
+            """.trimIndent(),
+        )
+        assertEquals("2.5s\n3500\n", out)
+    }
+
+    @Test
+    fun `toJSDate keeps the Instant as it is`() {
+        val out = output(
+            """
+            import kotlin.time.Instant
+            import kotlin.time.toJSDate
+
+            fun main() {
+                val t = Instant.fromEpochSeconds(86400)
+                println(t.toJSDate() == t)
+            }
+            """.trimIndent(),
+        )
+        assertEquals("true\n", out)
+    }
+
+    @Test
     fun `sequence allDistinct, allEqual and isSorted families`() {
         val out = output(
             """

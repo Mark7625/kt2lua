@@ -110,6 +110,8 @@ private val NUMERIC_CAST_RESULT = mapOf(
     "toInt" to TypeName.INT, "toLong" to TypeName.INT, "toShort" to TypeName.INT, "toByte" to TypeName.INT,
 )
 
+private val DURATION_UNIT_PROPERTIES = setOf("nanoseconds", "microseconds", "milliseconds", "seconds", "minutes", "hours", "days")
+
 private val DOUBLE_MATH_FUNCTIONS = setOf("sqrt", "floor", "ceil", "sin", "cos", "tan", "exp", "log", "log2", "log10", "hypot", "pow",
     "asin", "acos", "atan", "atan2", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "cbrt", "expm1", "ln", "ln1p")
 
@@ -203,6 +205,32 @@ class TypeAnalyzer {
         classes[name] = info
     }
 
+    /** Whether [expr] is a kotlin.time Duration: a `5.seconds`, `Duration.ZERO`, arithmetic on durations, or a variable holding one. */
+    fun isDuration(expr: Expression): Boolean = when (expr) {
+        is ParenExpr -> isDuration(expr.expr)
+        is Identifier -> instanceClassOf(expr.name) == "Duration"
+        is PropertyAccessExpr -> when {
+            expr.name in DURATION_UNIT_PROPERTIES -> classOfExpr(expr.obj) == null
+            expr.name in setOf("ZERO", "INFINITE") -> (expr.obj as? Identifier)?.name == "Duration"
+            expr.name == "absoluteValue" -> isDuration(expr.obj)
+            else -> false
+        }
+        is BinaryExpr -> when (expr.op) {
+            "+", "-" -> isDuration(expr.left) && isDuration(expr.right)
+            "*" -> isDuration(expr.left) != isDuration(expr.right)
+            "/" -> isDuration(expr.left) && !isDuration(expr.right)
+            else -> false
+        }
+        is UnaryExpr -> expr.op == "-" && isDuration(expr.expr)
+        is CallExpr -> expr.callee == "measureTime"
+        is MethodCallExpr -> when (expr.methodName) {
+            "toDuration" -> true
+            "coerceAtLeast", "coerceAtMost", "coerceIn", "plus", "minus", "times", "div", "unaryMinus" -> isDuration(expr.obj)
+            else -> false
+        }
+        else -> false
+    }
+
     fun isUserFunction(name: String): Boolean = name in functionSigs && name !in BUILTIN_SIGS
 
     fun functionReturnClass(name: String): String? = functionSigs[name]?.rawReturnType?.takeIf { it in classes }
@@ -278,6 +306,7 @@ class TypeAnalyzer {
         is CallExpr -> inferCallType(expr)
         is PropertyAccessExpr -> classOfExpr(expr.obj)?.let { classes[it]?.propertyTypes?.get(expr.name) }?.let(::normalizeType)
             ?: when {
+                expr.name.startsWith("inWhole") -> TypeName.INT
                 classOfExpr(expr.obj) != null -> TypeName.ANY
                 expr.name == "absoluteValue" -> inferExprType(expr.obj)
                 expr.name == "code" -> TypeName.INT
@@ -320,6 +349,8 @@ class TypeAnalyzer {
         if (expr.args.isEmpty() && (expr.methodName == "roundToInt" || expr.methodName == "roundToLong")) return TypeName.INT
         if (classOfExpr(expr.obj) == null && expr.methodName in setOf("nextUp", "nextDown", "nextTowards", "withSign", "IEEErem")) return TypeName.DOUBLE
         if (expr.args.size == 1 && expr.methodName == "pow" && classOfExpr(expr.obj) == null) return TypeName.DOUBLE
+        if (expr.args.size == 1 && expr.methodName == "toDouble" && classOfExpr(expr.obj).let { it == null || it == "Duration" }) return TypeName.DOUBLE
+        if (expr.args.size == 1 && expr.methodName in setOf("toLong", "toInt") && classOfExpr(expr.obj).let { it == null || it == "Duration" }) return TypeName.INT
         if (expr.args.isEmpty() && expr.methodName == "toChar" && classOfExpr(expr.obj) == null) return TypeName.CHAR
         if (expr.methodName in setOf("coerceAtLeast", "coerceAtMost", "coerceIn") && classOfExpr(expr.obj) == null) return inferExprType(expr.obj)
         val raw = classOfExpr(expr.obj)?.let { classes[it]?.methodReturnTypes?.get(expr.methodName) } ?: return TypeName.ANY
@@ -334,6 +365,9 @@ class TypeAnalyzer {
 
     private fun inferBinaryType(expr: BinaryExpr): TypeName {
         if (expr.op in setOf("==", "!=", "<", ">", "<=", ">=", "&&", "||", "in", "!in")) return TypeName.BOOLEAN
+        if (isDuration(expr.left) || isDuration(expr.right)) {
+            return if (expr.op == "/" && isDuration(expr.left) && isDuration(expr.right)) TypeName.DOUBLE else TypeName.ANY
+        }
         val lt = inferExprType(expr.left)
         val rt = inferExprType(expr.right)
         if (lt == TypeName.CHAR && expr.op == "+") return TypeName.CHAR

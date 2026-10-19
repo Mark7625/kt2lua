@@ -105,7 +105,26 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
         return ImportStatement(segments.joinToString("/"), alias)
     }
 
+    /** `@OptIn(ExperimentalTime::class)`, `@file:Suppress("x")`, `@JvmStatic`: annotations carry no meaning in Lua, so they're skipped. */
+    private fun skipAnnotations() {
+        while (check(TokenType.AT)) {
+            advance()
+            expectIdentifierName()
+            if (match(TokenType.COLON)) expectIdentifierName()
+            while (match(TokenType.DOT)) expectIdentifierName()
+            if (check(TokenType.LPAREN)) {
+                var depth = 0
+                do {
+                    if (check(TokenType.LPAREN)) depth++
+                    if (check(TokenType.RPAREN)) depth--
+                    advance()
+                } while (depth > 0)
+            }
+        }
+    }
+
     override fun parseStatement(): Statement {
+        skipAnnotations()
         if (check(TokenType.UNSUPPORTED_KEYWORD)) throw unsupportedKeywordError()
         if (check(TokenType.PRIVATE)) {
             advance()

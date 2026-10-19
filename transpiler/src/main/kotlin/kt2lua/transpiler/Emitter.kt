@@ -82,6 +82,17 @@ import kt2lua.transpiler.stdlib.registry.CollectionLoweringContext
 import kt2lua.transpiler.stdlib.registry.OperationCall
 import kt2lua.transpiler.stdlib.registry.OperationRegistry
 
+private val DURATION_UNIT_NAMES = mapOf(
+    "nanoseconds" to "1", "microseconds" to "1000", "milliseconds" to "1000000", "seconds" to "1000000000",
+    "minutes" to "60000000000", "hours" to "3600000000000", "days" to "86400000000000",
+)
+
+/** kotlin.time names that stand for a runtime table; they only apply where no class or variable of that name exists. */
+private val TIME_COMPANIONS = mapOf(
+    "Duration" to "__DurationCompanion", "Instant" to "__InstantCompanion", "Clock" to "__Clock",
+    "TimeSource" to "__TimeSource", "DurationUnit" to "__DurationUnit", "TimeUnit" to "__DurationUnit",
+)
+
 private val RANDOM_METHODS = setOf("nextInt", "nextDouble", "nextBoolean", "nextLong", "nextUInt", "nextULong", "nextUBytes", "asJavaRandom", "asKotlinRandom")
 
 private fun formatDouble(value: Double): String =
@@ -245,6 +256,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         )
         types.registerExternalClass("Pair", ClassInfo(emptyList(), emptySet(), false, native = true))
         types.registerExternalClass("Grouping", ClassInfo(emptyList(), emptySet(), false, native = true))
+        types.registerExternalClass("Duration", ClassInfo(emptyList(), emptySet(), false, native = true))
         types.registerExternalClass(
             "StringBuilder",
             ClassInfo(
@@ -485,6 +497,18 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
 
     private val NUMERIC_CAST_NAMES = setOf("toDouble", "toInt", "toFloat", "toLong", "toShort", "toByte")
 
+    /** Methods of the kotlin.time tables (Duration, marks, Instant, Clock, time sources) that no other type in this subset has. */
+    private fun isTimeMethod(expr: MethodCallExpr): Boolean {
+        val n = expr.args.size
+        return when (expr.methodName) {
+            "isNegative", "isPositive", "isInfinite", "isFinite", "toIsoString", "elapsedNow", "hasPassedNow", "hasNotPassedNow",
+            "toEpochMilliseconds", "markNow", "now", "fromEpochSeconds", "fromEpochMilliseconds", "asClock", "plusAssign" -> true
+            "toDouble", "toLong", "toInt" -> n == 1
+            "toString" -> n >= 1
+            else -> false
+        }
+    }
+
     private fun emitStringBuilderCall(expr: MethodCallExpr): String? {
         val sb = emitExpression(expr.obj)
         val a = expr.args.map { it.toExpression() }
@@ -516,7 +540,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         if (expr.methodName == "pow" && expr.args.size == 1 && receiverInstanceClass(expr.obj) == null && !hasDeclaredMethod(expr)) {
             return "(${emitExpression(expr.obj)} ^ ${emitExpression(expr.args[0].toExpression())})"
         }
-        if (receiverInstanceClass(expr.obj) == null && !hasDeclaredMethod(expr)) {
+        if (receiverInstanceClass(expr.obj).let { it == null || it == "Duration" } && !hasDeclaredMethod(expr)) {
             emitMathExtensionCall(expr)?.let { return it }
         }
         if (expr.methodName == "invoke" && !hasDeclaredMethod(expr) && receiverInstanceClass(expr.obj) == null) {
@@ -753,6 +777,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             val resultVar = nextTemp("__result")
             emitCollectionIIFE(resultVar) { emitInlineAccumulate(expr, resultVar, elementClass) }?.let { return it }
         }
+        if (isTimeMethod(expr)) {
+            useRuntimeHelper(RuntimeHelper.TIME)
+            return "${emitExpression(expr.obj)}:${expr.methodName}(${emitArgList(expr.args)})"
+        }
         return "${emitExpression(expr.obj)}.${expr.methodName}(${emitArgList(expr.args)})"
     }
 
@@ -884,7 +912,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         else -> false
     }
 
-    private fun instanceClassOfExpr(expr: Expression): String? = if (isDefaultRandom(expr)) "Random" else instanceClassOfNonRandomExpr(expr)
+    private fun instanceClassOfExpr(expr: Expression): String? =
+        if (isDefaultRandom(expr)) "Random" else if (types.isDuration(expr)) "Duration" else instanceClassOfNonRandomExpr(expr)
 
     private fun instanceClassOfNonRandomExpr(expr: Expression): String? = when (expr) {
         is ToPairExpr -> "Pair"
@@ -1107,11 +1136,22 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     }
 
     private fun emitPropertyAccess(receiver: Expression, name: String): String {
+        DURATION_UNIT_NAMES[name]?.takeIf { receiverInstanceClass(receiver) == null }?.let { factor ->
+            useRuntimeHelper(RuntimeHelper.TIME)
+            val type = types.inferExprType(receiver)
+            return if (type == TypeName.INT || type == TypeName.DOUBLE) "__dur(${emitExpression(receiver)} * $factor)"
+            else "__durUnit(${emitExpression(receiver)}, \"$name\")"
+        }
         if (name in setOf("first", "last") && receiverInstanceClass(receiver) == "List") {
             return inlineOnce(listOf(receiver), listOf(emitExpression(receiver))) { (t) -> if (name == "first") "$t[1]" else "$t[#$t]" }
         }
         if (name == "code" && receiverInstanceClass(receiver) == null) return "string.byte(${emitExpression(receiver)})"
-        if (name == "absoluteValue" && receiverInstanceClass(receiver) == null) return "math.abs(${emitExpression(receiver)})"
+        if (name == "absoluteValue" && receiverInstanceClass(receiver) == null) {
+            val type = types.inferExprType(receiver)
+            if (type == TypeName.INT || type == TypeName.DOUBLE) return "math.abs(${emitExpression(receiver)})"
+            useRuntimeHelper(RuntimeHelper.TIME)
+            return inlineOnce(listOf(receiver), listOf(emitExpression(receiver))) { (x) -> "(type($x) == \"number\" and math.abs($x) or $x.absoluteValue)" }
+        }
         if (name == "ulp" && receiverInstanceClass(receiver) == null) {
             useRuntimeHelper(RuntimeHelper.MATH_FLOAT)
             return "__ulp(${emitExpression(receiver)})"
@@ -1146,6 +1186,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     private fun emitIdentifier(name: String): String {
         if (name == "self") return types.currentReceiver() ?: name
         objectMemberPrefix(name, objectVars)?.let { return "$it.$name" }
+        TIME_COMPANIONS[name]?.takeIf { types.classInfo(name)?.native != false && types.env.lookup(name) == null && objectMemberPrefix(name, objectVars) == null }?.let {
+            useRuntimeHelper(RuntimeHelper.TIME)
+            return it
+        }
         if (isDefaultRandom(Identifier(name))) {
             useRuntimeHelper(RuntimeHelper.RANDOM)
             return "__Random.Default"
@@ -2450,6 +2494,20 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     }
 
     private fun emitCall(expr: CallExpr): String {
+        if (expr.callee == "TestTimeSource" && expr.args.isEmpty() && types.classInfo("TestTimeSource")?.native != false && !types.isUserFunction("TestTimeSource")) {
+            useRuntimeHelper(RuntimeHelper.TIME)
+            return "__TestTimeSource.new()"
+        }
+        if ((expr.callee == "measureTime" || expr.callee == "measureTimedValue") && expr.args.size == 1 && !types.isUserFunction(expr.callee)) {
+            val block = expr.args[0].toExpression().let { if (it is LambdaExpr) emitLambda(it, noParams = true) else emitExpression(it) }
+            useRuntimeHelper(RuntimeHelper.TIME)
+            return if (expr.callee == "measureTime") {
+                "(function(f) local __t = os.clock(); f(); return __dur((os.clock() - __t) * 1000000000) end)($block)"
+            } else {
+                "(function(f) local __t = os.clock(); local __v = f(); local __d = __dur((os.clock() - __t) * 1000000000); " +
+                    "return {value = __v, duration = __d, first = __v, second = __d} end)($block)"
+            }
+        }
         if (!types.isUserFunction(expr.callee)) emitSystemCall(expr)?.let { return it }
         if (expr.callee == "StringBuilder" && expr.args.size <= 1 && types.classInfo("StringBuilder")?.native == true) {
             val initial = expr.args.firstOrNull()?.toExpression()?.takeIf { types.inferExprType(it) != TypeName.INT }
@@ -2656,7 +2714,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
      * function so it is only evaluated once. No runtime helper is involved either way. */
     private fun inlineOnce(exprs: List<Expression>, strs: List<String>, build: (List<String>) -> String): String {
         if (exprs.all { it is Identifier || it is IntLiteral || it is LongLiteral || it is DoubleLiteral }) return build(strs)
-        val params = listOf("a", "b").take(strs.size)
+        val params = listOf("a", "b", "c", "d").take(strs.size)
         return "(function(${params.joinToString(", ")}) return ${build(params)} end)(${strs.joinToString(", ")})"
     }
 
@@ -2707,12 +2765,36 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                     "(($sign < 0 or 1 / $sign < 0) and -math.abs($x) or math.abs($x))"
                 }
             expr.methodName == "toChar" && args.isEmpty() -> "string.char($receiver)"
-            expr.methodName == "coerceAtLeast" && args.size == 1 -> "math.max($receiver, ${args[0]})"
-            expr.methodName == "coerceAtMost" && args.size == 1 -> "math.min($receiver, ${args[0]})"
-            expr.methodName == "coerceIn" && args.size == 2 -> "math.min(math.max($receiver, ${args[0]}), ${args[1]})"
+            expr.methodName == "compareTo" && args.size == 1 ->
+                inlineOnce(listOf(expr.obj, expr.args[0].toExpression()), listOf(receiver, args[0])) { (x, y) -> "($x < $y and -1 or ($x > $y and 1 or 0))" }
+            expr.methodName in setOf("plus", "minus", "times") && args.size == 1 && types.inferExprType(expr.obj) != TypeName.STRING ->
+                "($receiver ${mapOf("plus" to "+", "minus" to "-", "times" to "*").getValue(expr.methodName)} ${args[0]})"
+            expr.methodName == "div" && args.size == 1 && types.inferExprType(expr.obj) != TypeName.STRING ->
+                if (types.inferExprType(expr.obj) == TypeName.INT && types.inferExprType(expr.args[0].toExpression()) == TypeName.INT) "(math.modf($receiver / ${args[0]}))"
+                else "($receiver / ${args[0]})"
+            expr.methodName == "unaryMinus" && args.isEmpty() -> "(-$receiver)"
+            expr.methodName == "toComponents" && args.size == 1 -> {
+                useRuntimeHelper(RuntimeHelper.TIME)
+                "$receiver:toComponents(${args[0]}, ${(expr.args[0].toExpression() as? LambdaExpr)?.params?.size ?: 5})"
+            }
+            expr.methodName == "toDuration" && args.size == 1 -> {
+                useRuntimeHelper(RuntimeHelper.TIME)
+                "__toDuration($receiver, ${args[0]})"
+            }
+            expr.methodName in setOf("toJavaDuration", "toKotlinDuration", "toJavaInstant", "toKotlinInstant", "toJSDate", "toDurationUnit", "toTimeUnit") && args.isEmpty() -> receiver
+            expr.methodName == "coerceAtLeast" && args.size == 1 ->
+                inlineOnce(listOf(expr.obj, expr.args[0].toExpression()), listOf(receiver, args[0])) { (x, low) -> "($x < $low and $low or $x)" }
+            expr.methodName == "coerceAtMost" && args.size == 1 ->
+                inlineOnce(listOf(expr.obj, expr.args[0].toExpression()), listOf(receiver, args[0])) { (x, high) -> "($x > $high and $high or $x)" }
+            expr.methodName == "coerceIn" && args.size == 2 ->
+                inlineOnce(listOf(expr.obj, expr.args[0].toExpression(), expr.args[1].toExpression()), listOf(receiver, args[0], args[1])) { (x, low, high) ->
+                    "($x < $low and $low or ($x > $high and $high or $x))"
+                }
             expr.methodName == "coerceIn" && args.size == 1 && (expr.args[0].toExpression() as? RangeExpr)?.let { it.inclusive && !it.descending && it.step == null } == true -> {
                 val range = expr.args[0].toExpression() as RangeExpr
-                "math.min(math.max($receiver, ${emitExpression(range.start)}), ${emitExpression(range.end)})"
+                inlineOnce(listOf(expr.obj, range.start, range.end), listOf(receiver, emitExpression(range.start), emitExpression(range.end))) { (x, low, high) ->
+                    "($x < $low and $low or ($x > $high and $high or $x))"
+                }
             }
             expr.methodName == "IEEErem" && args.size == 1 -> {
                 useRuntimeHelper(RuntimeHelper.MATH_PRECISE)

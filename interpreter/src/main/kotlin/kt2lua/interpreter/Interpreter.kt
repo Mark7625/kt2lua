@@ -246,7 +246,14 @@ class Interpreter(
     }
 
     private fun evalUnary(expr: Unary, env: Environment): Any? = when (expr.op) {
-        "-" -> -asNumber(evalSingle(expr.expr, env))
+        "-" -> evalSingle(expr.expr, env).let { v ->
+            if (v is LuaTable) {
+                val mm = v.metatable?.rawGet("__unm") as? LuaCallable ?: throw LuaRuntimeException("attempt to perform arithmetic on a table value")
+                mm.call(listOf(v, v)).firstOrNull()
+            } else {
+                -asNumber(v)
+            }
+        }
         "not" -> !isTruthy(evalSingle(expr.expr, env))
         "#" -> luaLength(evalSingle(expr.expr, env))
         else -> throw LuaRuntimeException("Unknown unary operator '${expr.op}'")
@@ -270,29 +277,45 @@ class Interpreter(
         val l = evalSingle(expr.left, env)
         val r = evalSingle(expr.right, env)
         return when (expr.op) {
-            "+" -> asNumber(l) + asNumber(r)
-            "-" -> asNumber(l) - asNumber(r)
-            "*" -> asNumber(l) * asNumber(r)
-            "/" -> asNumber(l) / asNumber(r)
-            "%" -> asNumber(l).mod(asNumber(r))
-            "^" -> Math.pow(asNumber(l), asNumber(r))
+            "+" -> arith("__add", l, r) { asNumber(l) + asNumber(r) }
+            "-" -> arith("__sub", l, r) { asNumber(l) - asNumber(r) }
+            "*" -> arith("__mul", l, r) { asNumber(l) * asNumber(r) }
+            "/" -> arith("__div", l, r) { asNumber(l) / asNumber(r) }
+            "%" -> arith("__mod", l, r) { asNumber(l).mod(asNumber(r)) }
+            "^" -> arith("__pow", l, r) { Math.pow(asNumber(l), asNumber(r)) }
             ".." -> tostring(l) + tostring(r)
             "==" -> luaEquals(l, r)
             "~=" -> !luaEquals(l, r)
             "<" -> luaLess(l, r)
             ">" -> luaLess(r, l)
-            "<=" -> luaLess(l, r) || luaEquals(l, r)
-            ">=" -> luaLess(r, l) || luaEquals(l, r)
+            "<=" -> luaLessOrEqual(l, r)
+            ">=" -> luaLessOrEqual(r, l)
             else -> throw LuaRuntimeException("Unknown binary operator '${expr.op}'")
         }
     }
 
-    /** Numbers compare as IEEE doubles (NaN is not equal to itself), unlike boxed `Double.equals`. */
+    private fun metamethod(value: Any?, event: String): LuaCallable? = (value as? LuaTable)?.metatable?.rawGet(event) as? LuaCallable
+
+    /** `a op b`: a table operand dispatches to its (or the other operand's) metamethod, like real Lua. */
+    private fun arith(event: String, l: Any?, r: Any?, plain: () -> Double): Any? {
+        if (l is LuaTable || r is LuaTable) {
+            val mm = metamethod(l, event) ?: metamethod(r, event)
+                ?: throw LuaRuntimeException("attempt to perform arithmetic on a ${typeName(if (l is LuaTable) l else r)} value")
+            return mm.call(listOf(l, r)).firstOrNull()
+        }
+        return plain()
+    }
+
+    /** Numbers compare as IEEE doubles (NaN is not equal to itself), unlike boxed `Double.equals`; two distinct tables use `__eq`. */
     private fun luaEquals(l: Any?, r: Any?): Boolean {
         if (l is Double && r is Double) {
             val a: Double = l
             val b: Double = r
             return a == b
+        }
+        if (l is LuaTable && r is LuaTable && l !== r) {
+            val mm = metamethod(l, "__eq") ?: metamethod(r, "__eq")
+            if (mm != null) return isTruthy(mm.call(listOf(l, r)).firstOrNull())
         }
         return l == r
     }
@@ -300,7 +323,20 @@ class Interpreter(
     private fun luaLess(l: Any?, r: Any?): Boolean {
         if (l is Double && r is Double) return l < r
         if (l is String && r is String) return l < r
+        if (l is LuaTable || r is LuaTable) {
+            val mm = metamethod(l, "__lt") ?: metamethod(r, "__lt")
+            if (mm != null) return isTruthy(mm.call(listOf(l, r)).firstOrNull())
+        }
         throw LuaRuntimeException("attempt to compare ${typeName(l)} with ${typeName(r)}")
+    }
+
+    private fun luaLessOrEqual(l: Any?, r: Any?): Boolean {
+        if (l is LuaTable || r is LuaTable) {
+            val mm = metamethod(l, "__le") ?: metamethod(r, "__le")
+            if (mm != null) return isTruthy(mm.call(listOf(l, r)).firstOrNull())
+            return !luaLess(r, l)
+        }
+        return luaLess(l, r) || luaEquals(l, r)
     }
 }
 

@@ -3,6 +3,7 @@
 -- switching to scientific notation below 1e-3 and from 1e7 up.
 
 local function __fmtDouble(x)
+  if type(x) == "table" then return tostring(x) end
   x = tonumber(x)
   if x ~= x then return "NaN" end
   if x == math.huge then return "Infinity" end

@@ -337,6 +337,54 @@ private fun installOs(globals: Environment) {
     val os = LuaTable()
     os.rawSet("time", native("time") { System.currentTimeMillis() / 1000.0 })
     os.rawSet("clock", native("clock") { System.nanoTime() / 1_000_000_000.0 })
+    os.rawSet("date", native("date") { a ->
+        var format = a.getOrNull(0) as? String ?: "%c"
+        val seconds = (a.getOrNull(1) as? Double) ?: (System.currentTimeMillis() / 1000.0)
+        val utc = format.startsWith("!")
+        if (utc) format = format.substring(1)
+        val zone = if (utc) java.time.ZoneOffset.UTC else java.time.ZoneId.systemDefault()
+        val moment = java.time.Instant.ofEpochSecond(Math.floor(seconds).toLong()).atZone(zone)
+        if (format.startsWith("*t")) {
+            val table = LuaTable()
+            table.rawSet("year", moment.year.toDouble())
+            table.rawSet("month", moment.monthValue.toDouble())
+            table.rawSet("day", moment.dayOfMonth.toDouble())
+            table.rawSet("hour", moment.hour.toDouble())
+            table.rawSet("min", moment.minute.toDouble())
+            table.rawSet("sec", moment.second.toDouble())
+            table.rawSet("wday", (moment.dayOfWeek.value % 7 + 1).toDouble())
+            table.rawSet("yday", moment.dayOfYear.toDouble())
+            table.rawSet("isdst", false)
+            table
+        } else {
+            val out = StringBuilder()
+            var i = 0
+            while (i < format.length) {
+                val c = format[i]
+                if (c != '%' || i + 1 >= format.length) { out.append(c); i++; continue }
+                val f = format[i + 1]
+                i += 2
+                when (f) {
+                    'Y' -> out.append("%04d".format(moment.year))
+                    'y' -> out.append("%02d".format(moment.year % 100))
+                    'm' -> out.append("%02d".format(moment.monthValue))
+                    'd' -> out.append("%02d".format(moment.dayOfMonth))
+                    'H' -> out.append("%02d".format(moment.hour))
+                    'M' -> out.append("%02d".format(moment.minute))
+                    'S' -> out.append("%02d".format(moment.second))
+                    'j' -> out.append("%03d".format(moment.dayOfYear))
+                    'p' -> out.append(if (moment.hour < 12) "AM" else "PM")
+                    'A' -> out.append(moment.dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH))
+                    'a' -> out.append(moment.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH))
+                    'B' -> out.append(moment.month.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH))
+                    'b' -> out.append(moment.month.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH))
+                    '%' -> out.append('%')
+                    else -> out.append('%').append(f)
+                }
+            }
+            out.toString()
+        }
+    })
     os.rawSet("exit", native("exit") { a ->
         val code = when (val v = a.getOrNull(0)) {
             null, true -> 0
