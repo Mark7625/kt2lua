@@ -1,0 +1,12 @@
+{
+  "library": "kotlin-stdlib",
+  "kotlinVersion": "2.3.0",
+  "package": "kotlin.system",
+  "documentation": "Process/timing utilities. measureTimeMillis moved here from kotlin.json where it'd been misclassified earlier (it's a real kotlin.system declaration, not a kotlin package member). All unsupported — none have dedicated codegen.",
+  "declarations": [
+    {"id": "kotlin.system.measureTimeMillis(() -> Unit)", "name": "measureTimeMillis", "kind": "function", "status": "unsupported", "limitations": ["No dedicated codegen and no matching Lua global — compiles to a call to an undefined global, fails at runtime"]},
+    {"id": "kotlin.system.measureNanoTime(() -> Unit)", "name": "measureNanoTime", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.system.exitProcess(Int)", "name": "exitProcess", "kind": "function", "status": "unsupported", "limitations": ["No dedicated codegen and no matching Lua global"]},
+    {"id": "kotlin.system.getTimeMillis()", "name": "getTimeMillis", "kind": "function", "status": "unsupported"}
+  ]
+}

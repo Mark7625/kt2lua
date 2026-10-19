@@ -2,7 +2,11 @@
 kotlin = "2.3.0"
 jdk = "17"
 maven-publish = "0.37.0"
+gson = "2.11.0"
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "maven-publish" }
+
+[libraries]
+gson = { module = "com.google.code.gson:gson", version.ref = "gson" }

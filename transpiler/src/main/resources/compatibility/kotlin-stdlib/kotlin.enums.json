@@ -1,0 +1,10 @@
+{
+  "library": "kotlin-stdlib",
+  "kotlinVersion": "2.3.0",
+  "package": "kotlin.enums",
+  "documentation": "enumEntries() and EnumEntries<T> (Kotlin 1.9+). Entirely unsupported — enum class itself is a hard-unsupported language feature in this subset (see kotlin.lang.enumClass), so there's nothing for this package's API to operate on.",
+  "declarations": [
+    {"id": "kotlin.enums.enumEntries()", "name": "enumEntries", "kind": "function", "status": "unsupported", "limitations": ["Moot — enum class isn't supported at all, so there's no enum type to call this against"]},
+    {"id": "kotlin.enums.EnumEntries", "name": "EnumEntries", "kind": "type", "status": "unsupported"}
+  ]
+}

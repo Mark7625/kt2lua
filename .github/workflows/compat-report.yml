@@ -1,0 +1,55 @@
+name: compat-report
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "transpiler/src/main/resources/compatibility/kotlin-stdlib/**"
+      - "README.md"
+      - ".github/workflows/compat-report.yml"
+      - ".github/scripts/update-compat-report.sh"
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  compat-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build the CLI
+        run: ./gradlew :cli:installDist --no-daemon -q
+
+      - name: Regenerate the README table and issue body
+        run: bash .github/scripts/update-compat-report.sh
+
+      - name: Commit the README if it changed
+        run: |
+          if git diff --quiet -- README.md; then
+            echo "README unchanged, nothing to commit."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add README.md
+            git commit -m "Update Kotlin stdlib compatibility table [skip ci]"
+            git push
+          fi
+
+      - name: Update the tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: "3"
+        run: |
+          if [ "$ISSUE_NUMBER" = "0" ]; then
+            echo "No tracking issue number configured yet — skipping."
+          else
+            gh issue edit "$ISSUE_NUMBER" --body-file compat-issue-body.md
+          fi

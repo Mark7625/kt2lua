@@ -78,6 +78,11 @@ data class VariableDecl(
 ) : Statement()
 
 data class ExpressionStatement(val expr: Expression) : Statement()
+
+/** `val (a, b) = pair` / `val (a, b, c) = dataClassInstance`. Two names destructure via
+ * `.first`/`.second` (a Pair, or anything else shaped like one — `partition`/`zip` results);
+ * any other case uses `component1()`/`component2()`/... same as a real data class. */
+data class DestructuringDecl(val names: List<String>, val mutable: Boolean, val init: Expression, val isPrivate: Boolean = false) : Statement()
 data class ReturnStatement(val expr: Expression?) : Statement()
 data class IfStatement(val cond: Expression, val thenBranch: Block, val elseBranch: Block?) : Statement()
 data class ForStatement(
@@ -88,8 +93,9 @@ data class ForStatement(
     val step: Expression?,
     val body: Block,
 ) : Statement()
-/** Anything after `in` that isn't a `..`/`until` range compiles to `for _, x in ipairs(...)`. */
-data class ForInStatement(val varName: String, val iterable: Expression, val body: Block) : Statement()
+/** Anything after `in` that isn't a `..`/`until` range compiles to `for _, x in ipairs(...)` over
+ * a List; [varNames] has more than one entry only for a destructured `for ((k, v) in map)`. */
+data class ForInStatement(val varNames: List<String>, val iterable: Expression, val body: Block) : Statement()
 data class WhileStatement(val cond: Expression, val body: Block) : Statement()
 
 sealed class AssignTarget

@@ -1,0 +1,15 @@
+{
+  "library": "kotlin-stdlib",
+  "kotlinVersion": "2.3.0",
+  "package": "kotlin.io.path",
+  "documentation": "java.nio.file.Path extensions (the newer, non-java.io.File filesystem API). Entirely unsupported — no Path type, no filesystem access of any kind exists in this subset.",
+  "declarations": [
+    {"id": "kotlin.io.path.Path(String)", "name": "Path", "kind": "function", "status": "unsupported", "limitations": ["No Path type exists in this subset at all"]},
+    {"id": "kotlin.io.path.Path.readText()", "name": "readText", "kind": "extension", "receiver": "Path", "status": "unsupported"},
+    {"id": "kotlin.io.path.Path.writeText(String)", "name": "writeText", "kind": "extension", "receiver": "Path", "status": "unsupported"},
+    {"id": "kotlin.io.path.Path.exists()", "name": "exists", "kind": "extension", "receiver": "Path", "status": "unsupported"},
+    {"id": "kotlin.io.path.Path.createFile()", "name": "createFile", "kind": "extension", "receiver": "Path", "status": "unsupported"},
+    {"id": "kotlin.io.path.Path.deleteExisting()", "name": "deleteExisting", "kind": "extension", "receiver": "Path", "status": "unsupported"},
+    {"id": "kotlin.io.path.Path.listDirectoryEntries()", "name": "listDirectoryEntries", "kind": "extension", "receiver": "Path", "status": "unsupported"}
+  ]
+}

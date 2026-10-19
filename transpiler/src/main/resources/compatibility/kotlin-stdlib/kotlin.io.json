@@ -1,0 +1,21 @@
+{
+  "library": "kotlin-stdlib",
+  "kotlinVersion": "2.3.0",
+  "package": "kotlin.io",
+  "documentation": "Console I/O and java.io.File extensions. println()/print()/readLine() are real kotlin.io declarations (not kotlin package members, despite how commonly they're used) — moved here from kotlin.json where they'd been misclassified earlier in this manifest's history.",
+  "declarations": [
+    {"id": "kotlin.io.println(Any?)", "name": "println", "kind": "function", "status": "partial", "implementation": "Emitter.emitCall", "limitations": ["Real println takes 0 or 1 argument; this passes every argument through to Lua's print() comma-joined, so a multi-arg call compiles but has no real Kotlin equivalent to match against"]},
+    {"id": "kotlin.io.print(Any?)", "name": "print", "kind": "function", "status": "partial", "implementation": "Emitter.emitCall", "limitations": ["Only the first argument is read (io.write(arg0)); a 2nd+ argument is silently dropped, though real Kotlin print() never had one to begin with"]},
+    {"id": "kotlin.io.readLine()", "name": "readLine", "kind": "function", "status": "unsupported", "limitations": ["No dedicated codegen and no matching Lua global — compiles to a call to an undefined global, fails at runtime"]},
+    {"id": "kotlin.io.readln()", "name": "readln", "kind": "function", "status": "unsupported", "limitations": ["Same as readLine() — no dedicated codegen"]},
+    {"id": "kotlin.io.File.readText()", "name": "readText", "kind": "extension", "receiver": "File", "status": "unsupported", "limitations": ["No File type exists in this subset at all — no filesystem API of any kind"]},
+    {"id": "kotlin.io.File.writeText(String)", "name": "writeText", "kind": "extension", "receiver": "File", "status": "unsupported"},
+    {"id": "kotlin.io.File.readLines()", "name": "readLines", "kind": "extension", "receiver": "File", "status": "unsupported"},
+    {"id": "kotlin.io.File.bufferedReader()", "name": "bufferedReader", "kind": "extension", "receiver": "File", "status": "unsupported"},
+    {"id": "kotlin.io.File.bufferedWriter()", "name": "bufferedWriter", "kind": "extension", "receiver": "File", "status": "unsupported"},
+    {"id": "kotlin.io.File.walk()", "name": "walk", "kind": "extension", "receiver": "File", "status": "unsupported"},
+    {"id": "kotlin.io.File.copyTo(File)", "name": "copyTo", "kind": "extension", "receiver": "File", "status": "unsupported"},
+    {"id": "kotlin.io.File.deleteRecursively()", "name": "deleteRecursively", "kind": "extension", "receiver": "File", "status": "unsupported"},
+    {"id": "kotlin.io.Closeable.use((T) -> R)", "name": "use", "kind": "extension", "receiver": "Closeable", "status": "unsupported", "limitations": ["No Closeable type exists in this subset"]}
+  ]
+}

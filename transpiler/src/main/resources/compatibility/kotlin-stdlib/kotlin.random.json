@@ -1,0 +1,13 @@
+{
+  "library": "kotlin-stdlib",
+  "kotlinVersion": "2.3.0",
+  "package": "kotlin.random",
+  "documentation": "Random number generation. Entirely unsupported — no Random type is wired up, even though Lua's own math.random exists natively underneath; nothing in Emitter.kt routes kotlin.random.Random to it.",
+  "declarations": [
+    {"id": "kotlin.random.Random", "name": "Random", "kind": "type", "status": "unsupported", "limitations": ["No Random type exists in this subset; math.random() is never reachable from user Kotlin source even though it's right there in the Lua runtime"]},
+    {"id": "kotlin.random.Random.nextInt()", "name": "nextInt", "kind": "function", "receiver": "Random", "status": "unsupported"},
+    {"id": "kotlin.random.Random.nextInt(Int, Int)", "name": "nextInt", "kind": "function", "receiver": "Random", "status": "unsupported"},
+    {"id": "kotlin.random.Random.nextDouble()", "name": "nextDouble", "kind": "function", "receiver": "Random", "status": "unsupported"},
+    {"id": "kotlin.random.Random.nextBoolean()", "name": "nextBoolean", "kind": "function", "receiver": "Random", "status": "unsupported"}
+  ]
+}

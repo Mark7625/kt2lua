@@ -8,13 +8,24 @@ import kt2lua.transpiler.StatementParser
 import kt2lua.transpiler.TokenType
 
 /** `for (i in a..b)` / `for (i in a until b)` (a numeric range) vs `for (x in someList)`
- * (collection iteration) — disambiguated after the first name by whether `..`/`until` follows. */
+ * (collection iteration) — disambiguated after the first name by whether `..`/`until` follows.
+ * `for ((k, v) in someMap)` destructures a Map entry into two names instead of one. */
 class ForFeature : StatementParser {
     override fun supports(ctx: ParserContext): Boolean = ctx.check(TokenType.FOR)
 
     override fun parse(ctx: ParserContext): Statement {
         ctx.expect(TokenType.FOR)
         ctx.expect(TokenType.LPAREN)
+        if (ctx.check(TokenType.LPAREN)) {
+            ctx.expect(TokenType.LPAREN)
+            val varNames = mutableListOf(ctx.expectIdentifierName())
+            while (ctx.match(TokenType.COMMA)) varNames.add(ctx.expectIdentifierName())
+            ctx.expect(TokenType.RPAREN)
+            ctx.expect(TokenType.IN)
+            val iterable = ctx.parseAdditive()
+            ctx.expect(TokenType.RPAREN)
+            return ForInStatement(varNames, iterable, ctx.parseBlock())
+        }
         val varName = ctx.expectIdentifierName()
         ctx.expect(TokenType.IN)
         val start = ctx.parseAdditive()
@@ -23,7 +34,7 @@ class ForFeature : StatementParser {
             ctx.match(TokenType.UNTIL) -> false
             else -> {
                 ctx.expect(TokenType.RPAREN)
-                return ForInStatement(varName, start, ctx.parseBlock())
+                return ForInStatement(listOf(varName), start, ctx.parseBlock())
             }
         }
         val end = ctx.parseAdditive()

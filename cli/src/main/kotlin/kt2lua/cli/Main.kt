@@ -18,8 +18,12 @@ import kt2lua.transpiler.LuaBindings
 import kt2lua.transpiler.transpile
 import kt2lua.transpiler.transpileProject
 import java.io.File
+import java.io.FileDescriptor
+import java.io.FileOutputStream
+import java.io.PrintStream
 import java.util.Properties
 import kotlin.system.exitProcess
+import kotlin.text.Charsets
 
 private object BuildInfo {
     val version: String = Properties().apply {
@@ -29,18 +33,20 @@ private object BuildInfo {
 
 private val VERSION = BuildInfo.version
 
-/** Default output location for both single- and multi-file transpiles when `-o`/`--out` isn't
- * given — relative to the current directory, matching the Gradle plugin's own
- * `build/generated/kt2lua` convention (a build tool's output belongs under `build/`, not
- * scattered alongside hand-written sources). */
 private const val DEFAULT_OUT_DIR = "build/dist"
 
 private val KNOWN_FLAGS = setOf("-o", "--out", "--run", "--mock-globals", "--style", "--constants", "--bindings", "--package-root", "--lowercase-files", "-h", "--help", "-v", "--version")
 
 fun main(args: Array<String>) {
+    System.setOut(PrintStream(FileOutputStream(FileDescriptor.out), true, Charsets.UTF_8))
     if (args.isEmpty()) {
         printHelp()
         exitProcess(1)
+    }
+
+    if (args[0] == "compat") {
+        runCompatCommand(args)
+        return
     }
 
     val inputPaths = mutableListOf<String>()
@@ -108,10 +114,6 @@ fun main(args: Array<String>) {
 
     if (inputPaths.isEmpty()) usageError("No input file given")
 
-    // Explicit `--style <file>` wins; otherwise auto-detect a `kt2lua-style.properties` in the
-    // current directory, same as how a `checkstyle.xml` dropped into a project gets picked up
-    // without pointing anything at it. Either way, a missing file (or one that's only partial)
-    // falls back to kt2lua's own defaults — see EmitStyle.load's own doc comment.
     val styleFile = stylePath?.let { File(it) } ?: EmitStyle.autoDetect(File("."))
     val style = EmitStyle.load(styleFile)
     val bindings = LuaBindings(bindingEntries)
@@ -144,11 +146,6 @@ fun main(args: Array<String>) {
     }
 }
 
-/** Prints [message] prefixed `kt2lua: ` plus a hint toward `--help`, then exits — for an
- * argument-shape mistake (an unknown flag, a missing required value, no input at all), as
- * opposed to a file-not-found or compile error, neither of which `--help` would actually
- * explain. Typed `Nothing` so a call reads naturally as the tail of an Elvis (`?:
- * usageError(...)`) without the compiler needing a separate `return`/`exitProcess` afterward. */
 private fun usageError(message: String): Nothing {
     System.err.println("kt2lua: $message")
     System.err.println("Try 'kt2lua --help' for more information.")
@@ -180,15 +177,6 @@ private fun transpileSingleFile(inputPath: String, outputPath: String?, run: Boo
     }
 }
 
-/**
- * Transpiles several `.kt` files *together*, so [kt2lua.transpiler.transpileProject] can see
- * cross-file references and insert the `require(...)` calls they need automatically — the thing
- * a single-file `kt2lua file.kt -o file.lua` invocation structurally can't do, since it never
- * sees any other file's declarations. `-o` here names an output *directory*, not a file: each
- * input's package plus base name becomes `<outDir>/<package/path>/<name>.lua`, and that
- * same module path is used by sibling `require(...)` calls. Defaults to [DEFAULT_OUT_DIR] when `-o` isn't
- * given, same as the single-file case.
- */
 private fun transpileProjectFiles(inputPaths: List<String>, outputPath: String?, style: EmitStyle, literalConstants: Map<String, String>, rootPackage: String?, lowercaseFiles: Boolean, bindings: LuaBindings) {
     val projectFiles = inputPaths.map { path ->
         projectFileForSource(File(path).nameWithoutExtension, File(path).readText())
@@ -196,12 +184,6 @@ private fun transpileProjectFiles(inputPaths: List<String>, outputPath: String?,
     writeProject(projectFiles.map { it.withLuaLayout(rootPackage, lowercaseFiles) }, outputPath, style, literalConstants, bindings)
 }
 
-/**
- * Transpiles every `.kt` file under [dirPath], recursively — the whole-package-tree
- * counterpart of [transpileProjectFiles]. Declared Kotlin packages determine module paths;
- * files without a package retain their paths relative to [dirPath]. Optional layout flags
- * strip the chosen root package and lowercase filenames before requires are resolved.
- */
 private fun transpileDirectory(dirPath: String, outputPath: String?, style: EmitStyle, literalConstants: Map<String, String>, rootPackage: String?, lowercaseFiles: Boolean, bindings: LuaBindings) {
     val projectFiles = discoverProjectFiles(File(dirPath))
     if (projectFiles.isEmpty()) usageError("No .kt files found under $dirPath")
@@ -225,12 +207,6 @@ private fun writeProject(projectFiles: List<ProjectFile>, outputPath: String?, s
     }
 }
 
-/**
- * Runs a hand-written/compiled `.lua` file directly, with `require(...)` resolved relative to
- * its directory. [mockGlobals] are pre-defined as [kt2lua.interpreter.autoStub] values before
- * running, for smoke-testing scripts against a host API (e.g. the RS3 client's globals) you
- * don't want to hand-stub piece by piece.
- */
 private fun runLuaFile(file: File, mockGlobals: List<String>) {
     try {
         val interp = Interpreter(moduleLoader = DirectoryModuleLoader(file.parentFile ?: File(".")))
@@ -243,8 +219,6 @@ private fun runLuaFile(file: File, mockGlobals: List<String>) {
     }
 }
 
-/** Formats `path:line:col: message` for positioned diagnostics, falling back to the bare
- * message for anything else (e.g. an I/O error). */
 private fun diagnosticFor(path: String, e: Exception): String = when (e) {
     is LexException -> "$path:${e.line}:${e.col}: ${e.rawMessage}"
     is ParseException -> "$path:${e.line}:${e.col}: ${e.rawMessage}"
@@ -263,6 +237,16 @@ private fun printHelp() {
           kt2lua <source-dir> [options]            Transpile every .kt file under a directory,
                                                     preserving its subdirectory layout
           kt2lua <input.lua> [--mock-globals ...]  Run a Lua file directly
+          kt2lua compat list [package]             Browse bundled Kotlin-stdlib compatibility
+                                                    manifests, optionally filtered to one package
+          kt2lua compat status <query>             Look up a declaration's support status by
+                                                    name or id fragment
+          kt2lua compat validate                   Cross-check manifests against the real
+                                                    operation registry for registry-routed declarations
+          kt2lua compat issue <query>               Build a pre-filled GitHub "new issue" URL for
+                                                    an unsupported/partial declaration
+          kt2lua compat report table|issue         Print the per-package progress table (README)
+                                                    or the full tracking-issue body
           kt2lua -h | --help                       Show this help message
           kt2lua -v | --version                    Show the version number
 

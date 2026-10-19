@@ -8,6 +8,11 @@ val bundledModules = listOf("common", "transpiler", "interpreter", "cli", "gradl
 
 sourceSets.main {
     kotlin.srcDirs(bundledModules.map { rootProject.file("$it/src/main/kotlin") })
+    resources.srcDirs(bundledModules.map { rootProject.file("$it/src/main/resources") })
+}
+
+dependencies {
+    implementation(libs.gson)
 }
 
 gradlePlugin {

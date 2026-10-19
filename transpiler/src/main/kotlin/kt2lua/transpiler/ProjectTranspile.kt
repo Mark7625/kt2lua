@@ -121,6 +121,7 @@ private fun collectFreeNames(stmt: Statement, out: MutableSet<String>) {
         }
         is FunctionDecl -> collectFreeNames(stmt.body, out)
         is VariableDecl -> collectFreeNames(stmt.init, out)
+        is DestructuringDecl -> collectFreeNames(stmt.init, out)
         is ExpressionStatement -> collectFreeNames(stmt.expr, out)
         is ReturnStatement -> stmt.expr?.let { collectFreeNames(it, out) }
         is IfStatement -> {

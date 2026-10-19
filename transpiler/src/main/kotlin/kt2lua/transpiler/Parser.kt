@@ -20,7 +20,7 @@ private val MULTIPLICATIVE_OPS = mapOf(
 )
 
 /** Index into [Parser.binaryLevels] for the additive level — see [Parser.parseAdditive]. */
-private const val ADDITIVE_LEVEL = 6
+private const val ADDITIVE_LEVEL = 7
 
 /** One precedence level of this subset's binary operators, loosest-binding first. [matchOp]
  * recognizes and consumes this level's operator at the current token, or returns null without
@@ -116,6 +116,9 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
         }
         if (check(TokenType.FUN)) return parseFunctionDecl(isPrivate = false)
         for (feature in statementFeatures) if (feature.supports(this)) return feature.parse(this)
+        if ((check(TokenType.VAL) || check(TokenType.VAR)) && peekType(1) == TokenType.LPAREN) {
+            return parseDestructuringDecl(isPrivate = false)
+        }
         if (check(TokenType.VAL) || check(TokenType.VAR)) return parseVariableDecl(isPrivate = false)
         if (check(TokenType.RETURN)) return parseReturnStatement()
         if (check(TokenType.LBRACE)) return parseBlock()
@@ -145,7 +148,23 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
     private fun parseStatementModifiers(): Statement {
         if (match(TokenType.CONST)) return parseVariableDecl(isPrivate = true)
         if (check(TokenType.FUN)) return parseFunctionDecl(isPrivate = true)
+        if ((check(TokenType.VAL) || check(TokenType.VAR)) && peekType(1) == TokenType.LPAREN) {
+            return parseDestructuringDecl(isPrivate = true)
+        }
         return parseVariableDecl(isPrivate = true)
+    }
+
+    /** `val (a, b) = pair` — already known (by [peekType] lookahead) to have `(` right after
+     * `val`/`var`, so this just consumes the name list unconditionally. */
+    private fun parseDestructuringDecl(isPrivate: Boolean): Statement {
+        val mutable = check(TokenType.VAR)
+        advance()
+        expect(TokenType.LPAREN)
+        val names = mutableListOf(expectIdentifierName())
+        while (match(TokenType.COMMA)) names.add(expectIdentifierName())
+        expect(TokenType.RPAREN)
+        expect(TokenType.ASSIGN)
+        return DestructuringDecl(names, mutable, parseExpression(), isPrivate)
     }
 
     override fun unsupportedKeywordError(): ParseException {
@@ -193,6 +212,9 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
 
     override fun parseTypeName(): TypeName {
         val type = normalizeType(expectIdentifierName())
+        // `MutableSet<Int>`, `Map<String, Int>`, ... — a type position is never ambiguous with
+        // the `<` comparison operator, so these are always skipped unconditionally.
+        if (check(TokenType.LT)) skipGenericArgs()
         match(TokenType.QUESTION) // trailing `?` on a nullable type: consumed, no effect
         return type
     }
@@ -254,13 +276,26 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
         return null
     }
 
+    /** `x !in xs` — `!` and `in` as two separate tokens (unlike `!=`), only recognized here in
+     * infix position so it can't be confused with a unary `!` at the start of an operand. */
+    private fun matchInOp(): String? {
+        if (check(TokenType.NOT) && peekType(1) == TokenType.IN) {
+            advance()
+            advance()
+            return "!in"
+        }
+        if (match(TokenType.IN)) return "in"
+        return null
+    }
+
     /** Loosest-to-tightest, matching real Kotlin's relative precedence: `||`, `&&`, `==`/`!=`,
-     * `<`/`>`/`<=`/`>=`, `?:`, `to`, `+`/`-`, `*`/`/`/`%`. */
+     * `<`/`>`/`<=`/`>=`, `in`/`!in`, `?:`, `to`, `+`/`-`, `*`/`/`/`%`. */
     private val binaryLevels: List<BinaryLevel> = listOf(
         BinaryLevel({ if (match(TokenType.OR_OR)) "||" else null }),
         BinaryLevel({ if (match(TokenType.AND_AND)) "&&" else null }),
         BinaryLevel({ matchTokenOp(EQUALITY_OPS) }),
         BinaryLevel({ matchTokenOp(RELATIONAL_OPS) }),
+        BinaryLevel({ matchInOp() }),
         BinaryLevel({ if (match(TokenType.ELVIS)) "?:" else null }, build = { _, l, r -> ElvisExpr(l, r) }),
         BinaryLevel({ matchInfixTo() }, build = { _, l, r -> ToPairExpr(l, r) }),
         BinaryLevel({ matchTokenOp(ADDITIVE_OPS) }),
@@ -424,7 +459,8 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
     /** `<` after an identifier is ambiguous between `a < b` and a call-site type-argument list.
      * Scans forward tracking angle-bracket depth, accepting only identifiers/commas/dots; it's
      * a generic argument list only if the scan reaches a balanced `>` immediately followed by
-     * `(` — anything else is a real `<` comparison. */
+     * `(` or `{` (a call with no parens but a trailing lambda, like `compareBy<Person> { ... }`)
+     * — anything else is a real `<` comparison. */
     private fun looksLikeGenericCallArgs(): Boolean {
         var i = pos
         var depth = 0
@@ -433,7 +469,7 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
                 TokenType.LT -> depth++
                 TokenType.GT -> {
                     depth--
-                    if (depth == 0) return i + 1 < tokens.size && tokens[i + 1].type == TokenType.LPAREN
+                    if (depth == 0) return i + 1 < tokens.size && (tokens[i + 1].type == TokenType.LPAREN || tokens[i + 1].type == TokenType.LBRACE)
                 }
                 TokenType.IDENTIFIER, TokenType.COMMA, TokenType.DOT -> {}
                 else -> return false
@@ -483,13 +519,21 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
         return args
     }
 
-    /** `{ x, y -> body }` / `{ body }` (implicit `it`). Distinguishing an explicit param list
-     * from a body that happens to start the same way (`{ x + 1 }`) needs a bounded lookahead
-     * for `(IDENTIFIER ,)* IDENTIFIER ->` before committing to either reading. */
+    /** `{ x, y -> body }` / `{ (k, v) -> body }` (a Map entry destructured into two names) /
+     * `{ body }` (implicit `it`). Distinguishing an explicit param list from a body that happens
+     * to start the same way (`{ x + 1 }`) needs a bounded lookahead for `(IDENTIFIER ,)*
+     * IDENTIFIER ->` before committing to either reading. */
     private fun parseLambda(): LambdaExpr {
         expect(TokenType.LBRACE)
         val params = mutableListOf<String>()
-        if (hasLambdaParamList()) {
+        if (hasDestructuredLambdaParamList()) {
+            expect(TokenType.LPAREN)
+            do {
+                params.add(expectIdentifierName())
+            } while (match(TokenType.COMMA))
+            expect(TokenType.RPAREN)
+            expect(TokenType.ARROW)
+        } else if (hasLambdaParamList()) {
             do {
                 params.add(expectIdentifierName())
                 if (match(TokenType.COLON)) parseTypeName()
@@ -503,6 +547,23 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
         }
         expect(TokenType.RBRACE)
         return LambdaExpr(params, Block(body))
+    }
+
+    /** `(k, v) ->` right after `{` — a destructured single lambda parameter (here, always a Map
+     * entry), treated the same as two real parameters at the AST level. */
+    private fun hasDestructuredLambdaParamList(): Boolean {
+        if (peekType(0) != TokenType.LPAREN) return false
+        var offset = 1
+        if (peekType(offset) != TokenType.IDENTIFIER) return false
+        offset++
+        while (peekType(offset) == TokenType.COMMA) {
+            offset++
+            if (peekType(offset) != TokenType.IDENTIFIER) return false
+            offset++
+        }
+        if (peekType(offset) != TokenType.RPAREN) return false
+        offset++
+        return peekType(offset) == TokenType.ARROW
     }
 
     private fun hasLambdaParamList(): Boolean {

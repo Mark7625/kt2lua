@@ -59,6 +59,29 @@ data class ClassInfo(
     val superClass: String? = null,
 )
 
+/** Every Kotlin spelling of a stdlib collection type collapses to one of these three
+ * pseudo-classes — `List`/`Set`/`Map` — so `: MutableSet<Int>`, `: HashMap<String, Int>`, etc.
+ * all get tracked the same way as `setOf(...)`/`mapOf(...)` results. */
+private val COLLECTION_TYPE_ALIASES = mapOf(
+    "List" to "List", "MutableList" to "List", "ArrayList" to "List",
+    "Set" to "Set", "MutableSet" to "Set", "HashSet" to "Set", "LinkedHashSet" to "Set",
+    "Map" to "Map", "MutableMap" to "Map", "HashMap" to "Map", "LinkedHashMap" to "Map",
+)
+
+/** `val callbacks = mapOf(...)` — an unannotated property's [rawType] is empty, so a Map/Set/List
+ * constructor call is recognized here instead, straight from its initializer, the same
+ * pseudo-class name [TypeAnalyzer.declareInstance]'s alias table would collapse an explicit
+ * annotation to. Empty (not tracked) for anything else. */
+private fun collectionConstructorKind(init: Expression): String {
+    val callee = (init as? CallExpr)?.callee ?: return ""
+    return when (callee) {
+        "listOf", "mutableListOf", "arrayListOf", "emptyList" -> "List"
+        "setOf", "mutableSetOf", "hashSetOf", "emptySet" -> "Set"
+        "mapOf", "mutableMapOf", "hashMapOf", "emptyMap" -> "Map"
+        else -> ""
+    }
+}
+
 private val BUILTIN_SIGS = mapOf(
     "println" to FunctionSig(emptyList(), TypeName.UNIT),
     "print" to FunctionSig(emptyList(), TypeName.UNIT),
@@ -110,9 +133,11 @@ class TypeAnalyzer {
         listElementScopes.removeAt(listElementScopes.size - 1)
     }
 
-    /** No-op if [className] isn't actually a registered class. */
+    /** No-op if [className] (after collapsing a collection alias like `MutableSet`/`HashMap`
+     * to its canonical `Set`/`Map`/`List` pseudo-class) isn't actually a registered class. */
     fun declareInstance(name: String, className: String) {
-        if (className in classes) instanceScopes.last()[name] = className
+        val canonical = COLLECTION_TYPE_ALIASES[className] ?: className
+        if (canonical in classes) instanceScopes.last()[name] = canonical
     }
 
     fun instanceClassOf(name: String): String? {
@@ -175,7 +200,7 @@ class TypeAnalyzer {
                             stmt.methods.associate { it.name to rawReturnTypeOf(it) },
                         propertyTypes = (superInfo?.propertyTypes ?: emptyMap()) +
                             stmt.params.associate { it.name to "" } +
-                            stmt.properties.associate { it.name to it.rawType },
+                            stmt.properties.associate { it.name to it.rawType.ifEmpty { collectionConstructorKind(it.init) } },
                         superClass = stmt.superClass,
                     )
                 }

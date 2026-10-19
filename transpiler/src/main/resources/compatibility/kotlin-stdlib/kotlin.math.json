@@ -1,0 +1,28 @@
+{
+  "library": "kotlin-stdlib",
+  "kotlinVersion": "2.3.0",
+  "package": "kotlin.math",
+  "documentation": "There is no generic kotlin.math.* → Lua math.* binding mechanism — only 5 names have real, specific codegen in Emitter.kt's emitCall; everything else falls through to a literal same-name Lua call and fails at runtime. import kotlin.math.* itself is a parsed no-op (wildcard imports are dropped) — it doesn't enable anything.",
+  "declarations": [
+    {"id": "kotlin.math.sqrt(Double)", "name": "sqrt", "kind": "function", "status": "supported", "implementation": "Emitter.emitCall", "documentation": "Called as a top-level free function sqrt(x), not Double.sqrt — compiles to math.sqrt(x)"},
+    {"id": "kotlin.math.abs(Double)", "name": "abs", "kind": "function", "status": "supported", "implementation": "Emitter.emitCall", "documentation": "Top-level call abs(x) → math.abs(x); same codegen used for the Int overload too"},
+    {"id": "kotlin.math.max(Double, Double)", "name": "max", "kind": "function", "status": "partial", "implementation": "Emitter.emitCall", "limitations": ["Fixed 2-positional-argument arity only; no vararg maxOf(...) overload, no named arguments"]},
+    {"id": "kotlin.math.min(Double, Double)", "name": "min", "kind": "function", "status": "partial", "implementation": "Emitter.emitCall", "limitations": ["Same fixed-2-arg caveat as max()"]},
+    {"id": "kotlin.math.Double.pow(Double)", "name": "pow", "kind": "function", "receiver": "Double", "status": "unsupported", "limitations": ["Real Kotlin calls this as a method, x.pow(2) — there is no .pow() method dispatch at all. Only a non-idiomatic top-level pow(a, b) is recognized, which compiles to (a ^ b); idiomatic x.pow(2) is a genuine gap, not just a limitation"]},
+    {"id": "kotlin.math.floor(Double)", "name": "floor", "kind": "function", "status": "unsupported", "limitations": ["No dedicated top-level codegen (math.floor is only ever emitted internally by the Int/Int truncating-division helper __intdiv, never reachable from user Kotlin source) — falls through to an undefined-global call and fails at runtime"]},
+    {"id": "kotlin.math.ceil(Double)", "name": "ceil", "kind": "function", "status": "unsupported", "limitations": ["Same as floor() — math.ceil only appears internally, never reachable from user source"]},
+    {"id": "kotlin.math.round(Double)", "name": "round", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.math.sign(Double)", "name": "sign", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.math.truncate(Double)", "name": "truncate", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.math.PI", "name": "PI", "kind": "property", "status": "unsupported", "limitations": ["Falls through to an undefined global PI, not Lua's math.pi"]},
+    {"id": "kotlin.math.E", "name": "E", "kind": "property", "status": "unsupported"},
+    {"id": "kotlin.math.sin(Double)", "name": "sin", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.math.cos(Double)", "name": "cos", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.math.tan(Double)", "name": "tan", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.math.log(Double, Double)", "name": "log", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.math.log2(Double)", "name": "log2", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.math.log10(Double)", "name": "log10", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.math.exp(Double)", "name": "exp", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.math.hypot(Double, Double)", "name": "hypot", "kind": "function", "status": "unsupported"}
+  ]
+}

@@ -20,6 +20,11 @@ interface EmitContext {
     fun paramList(fn: FunctionDecl): String
     fun emitFunctionBody(fn: FunctionDecl)
 
+    /** `"List"`/`"Set"`/`"Map"`/a user class name/null — whatever [expr] is tracked as an
+     * instance of, so a feature outside [Emitter] (e.g. [kt2lua.transpiler.emitter.ForEmitter])
+     * can tell a Set/Map apart from a plain List/Array. */
+    fun instanceClassOf(expr: Expression): String?
+
     /** One member of a module table / `object` body: a `private` function stays a plain local,
      * a non-private function becomes `$moduleVar.<name>`, a variable both stays local and gets
      * mirrored onto `$moduleVar.<name>`, anything else emits normally. */

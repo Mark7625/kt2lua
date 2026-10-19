@@ -5,6 +5,7 @@ plugins {
 
 dependencies {
     implementation(project(":common"))
+    implementation(libs.gson)
     testImplementation(kotlin("test"))
 }
 

@@ -27,11 +27,44 @@ object ForEmitter {
         ctx.line("end")
     }
 
+    /** `for (x in xs)` over a List iterates the array directly; over a Set, its `.list` field.
+     * `for ((k, v) in map)` destructures each entry; a single-name loop over a Map instead binds
+     * just the key (closest match to "no destructuring" since there's no single sensible value
+     * to bind). */
     fun emitForInStatement(stmt: ForInStatement, ctx: EmitContext) {
-        ctx.line("for _, ${stmt.varName} in ipairs(${ctx.emitExpression(stmt.iterable)}) do")
-        ctx.pushIndent()
+        val kind = ctx.instanceClassOf(stmt.iterable)
         ctx.types.pushScope()
-        ctx.types.env.declare(stmt.varName, TypeName.ANY)
+        if (kind == "Map") {
+            // Hoisted into a local first, unconditionally: the loop body's `$iterableStr.map[...]`
+            // line below runs once per iteration, so if the iterable's own text were repeated
+            // there (instead of a plain local name), a non-trivial expression — a function call
+            // building the map, say — would get re-evaluated on every single iteration.
+            ctx.line("local __iter = ${ctx.emitExpression(stmt.iterable)}")
+            val keyName = stmt.varNames[0]
+            ctx.line("for _, $keyName in ipairs(__iter.keys) do")
+            ctx.pushIndent()
+            ctx.types.env.declare(keyName, TypeName.ANY)
+            if (stmt.varNames.size > 1) {
+                val valueName = stmt.varNames[1]
+                ctx.types.env.declare(valueName, TypeName.ANY)
+                ctx.line("local $valueName = __iter.map[$keyName]")
+            }
+        } else if (kind == "Sequence") {
+            // A Sequence value is itself a factory for a plain Lua iterator function (see
+            // Emitter.emitSequenceExpr) — exactly the shape `for x in f do ... end` already
+            // expects, so no `ipairs`/`.list` unwrapping is needed here at all.
+            val varName = stmt.varNames[0]
+            ctx.line("for $varName in (${ctx.emitExpression(stmt.iterable)})() do")
+            ctx.pushIndent()
+            ctx.types.env.declare(varName, TypeName.ANY)
+        } else {
+            val iterableStr = ctx.emitExpression(stmt.iterable)
+            val varName = stmt.varNames[0]
+            val source = if (kind == "Set") "$iterableStr.list" else iterableStr
+            ctx.line("for _, $varName in ipairs($source) do")
+            ctx.pushIndent()
+            ctx.types.env.declare(varName, TypeName.ANY)
+        }
         stmt.body.body.forEach { ctx.emitStatement(it) }
         ctx.types.popScope()
         ctx.popIndent()

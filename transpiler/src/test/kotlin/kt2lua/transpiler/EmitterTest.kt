@@ -232,23 +232,31 @@ class EmitterTest {
     }
 
     @Test
-    fun `fold compiles to the runtime helper with the seed as a second argument`() {
+    fun `fold inlines to a loop with its own accumulator, seeded before the loop`() {
         val code = emit("fun main() { val n = xs.fold(0) { acc, x -> acc + x } }")
-        assertTrue(code.contains("local function __fold(t, initial, fn)"))
-        assertTrue(code.contains("__fold(xs, 0, function(acc, x)"))
+        assertTrue(code.contains("local acc = 0"))
+        assertTrue(code.contains("for _, x in ipairs(xs) do"))
+        assertTrue(code.contains("acc = (acc + x)"))
+        assertTrue(code.contains("local n = acc"))
     }
 
     @Test
-    fun `reduce compiles to the runtime helper like forEach-map-filter`() {
+    fun `reduce inlines to a loop seeded from the first element`() {
         val code = emit("fun main() { val n = xs.reduce { acc, x -> acc * x } }")
-        assertTrue(code.contains("local function __reduce(t, fn)"))
-        assertTrue(code.contains("__reduce(xs, function(acc, x)"))
+        assertTrue(code.contains("local acc = xs[1]"))
+        assertTrue(code.contains("for __i = 2, #xs do"))
+        assertTrue(code.contains("acc = (acc * x)"))
+        assertTrue(code.contains("local n = acc"))
     }
 
     @Test
-    fun `mapOf with to pairs compiles to a Lua table with bracketed key entries`() {
+    fun `mapOf with to pairs builds a keys-ordered map in place`() {
         val code = emit("""fun main() { val m = mapOf("a" to 1, "b" to 2) }""")
-        assertTrue(code.contains("{[\"a\"] = 1, [\"b\"] = 2}"))
+        assertTrue(code.contains("local m = {keys = {}, map = {}}"))
+        assertTrue(code.contains("if m.map[\"a\"] == nil then table.insert(m.keys, \"a\") end"))
+        assertTrue(code.contains("m.map[\"a\"] = 1"))
+        assertTrue(code.contains("if m.map[\"b\"] == nil then table.insert(m.keys, \"b\") end"))
+        assertTrue(code.contains("m.map[\"b\"] = 2"))
     }
 
     @Test
@@ -258,16 +266,16 @@ class EmitterTest {
     }
 
     @Test
-    fun `string-keyed index access is not shifted like a list index`() {
+    fun `map index read goes through the map field, not a raw table index`() {
         val code = emit("""fun main() { val m = mapOf("a" to 1); println(m["a"]) }""")
-        assertTrue(code.contains("m[\"a\"]"))
-        assertTrue(!code.contains("m[(\"a\")"))
+        assertTrue(code.contains("m.map[\"a\"]"))
     }
 
     @Test
-    fun `string-keyed index assignment is not shifted either`() {
+    fun `map index assignment goes through the put bookkeeping`() {
         val code = emit("""fun main() { val m = mapOf("a" to 1); m["b"] = 2 }""")
-        assertTrue(code.contains("m[\"b\"] = 2"))
+        assertTrue(code.contains("if m.map[\"b\"] == nil then table.insert(m.keys, \"b\") end"))
+        assertTrue(code.contains("m.map[\"b\"] = 2"))
     }
 
     @Test
@@ -423,25 +431,31 @@ class EmitterTest {
     }
 
     @Test
-    fun `multi-statement lambda promotes only its last bare expression to a return`() {
+    fun `multi-statement forEach lambda emits every statement as a plain loop body line`() {
         val code = emit("fun main() { xs.forEach { x -> val sq = x * x; println(sq) } }")
         assertTrue(code.contains("local sq = (x * x)"))
-        assertTrue(code.contains("return print(sq)"))
+        assertTrue(code.contains("print(sq)"))
+        assertTrue(!code.contains("return print(sq)"))
     }
 
     @Test
-    fun `forEach compiles to the runtime helper, not a dot or colon call`() {
+    fun `forEach inlines to a plain for loop, not a dot or colon call`() {
         val code = emit("fun main() { xs.forEach { println(it) } }")
-        assertTrue(code.contains("local function __forEach(t, fn)"))
-        assertTrue(code.contains("__forEach(xs, function(it)"))
-        assertTrue(!code.contains("xs.forEach") && !code.contains("xs:forEach"))
+        assertTrue(code.contains("for _, it in ipairs(xs) do"))
+        assertTrue(code.contains("print(it)"))
+        assertTrue(!code.contains("xs.forEach") && !code.contains("xs:forEach") && !code.contains("__forEach"))
     }
 
     @Test
-    fun `map and filter each only emit the helper they actually use`() {
+    fun `map and filter inline to their own loop shape, not a shared helper`() {
         val mapOnly = emit("fun main() { xs.map { it * 2 } }")
-        assertTrue(mapOnly.contains("__map"))
-        assertTrue(!mapOnly.contains("__filter") && !mapOnly.contains("__forEach"))
+        assertTrue(mapOnly.contains("for __i, it in ipairs(xs) do"))
+        assertTrue(mapOnly.contains("= (it * 2)"))
+        assertTrue(!mapOnly.contains("__map") && !mapOnly.contains("__filter") && !mapOnly.contains("__forEach"))
+
+        val filterOnly = emit("fun main() { xs.filter { it > 0 } }")
+        assertTrue(filterOnly.contains("table.insert"))
+        assertTrue(!filterOnly.contains("__map") && !filterOnly.contains("__filter"))
     }
 
     @Test

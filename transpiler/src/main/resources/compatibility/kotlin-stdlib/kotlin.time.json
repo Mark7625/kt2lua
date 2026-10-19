@@ -1,0 +1,14 @@
+{
+  "library": "kotlin-stdlib",
+  "kotlinVersion": "2.3.0",
+  "package": "kotlin.time",
+  "documentation": "Duration/time-measurement API. Entirely unsupported — no Duration type exists; this subset's only time-adjacent thing is measureTimeMillis (kotlin.system), also unsupported.",
+  "declarations": [
+    {"id": "kotlin.time.Duration", "name": "Duration", "kind": "type", "status": "unsupported", "limitations": ["No Duration type exists in this subset at all"]},
+    {"id": "kotlin.time.Int.seconds", "name": "seconds", "kind": "property", "receiver": "Int", "status": "unsupported"},
+    {"id": "kotlin.time.Int.milliseconds", "name": "milliseconds", "kind": "property", "receiver": "Int", "status": "unsupported"},
+    {"id": "kotlin.time.Duration.inWholeMilliseconds", "name": "inWholeMilliseconds", "kind": "property", "receiver": "Duration", "status": "unsupported"},
+    {"id": "kotlin.time.measureTime(() -> Unit)", "name": "measureTime", "kind": "function", "status": "unsupported", "limitations": ["No dedicated codegen and no matching Lua global"]},
+    {"id": "kotlin.time.TimeSource", "name": "TimeSource", "kind": "type", "status": "unsupported"}
+  ]
+}

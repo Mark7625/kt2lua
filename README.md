@@ -1,8 +1,14 @@
 <p align="center">
-  <img src="branding/kt2lua-square-icon.png" alt="kt2lua" width="120">
+  <img src="branding/png/kt2lua-mark-512.png" alt="kt2lua" width="120">
 </p>
 <p align="center">
-  <img src="branding/kt2lua-wordmark.png" alt="kt2lua" height="56">
+  <img src="branding/png/kt2lua-wordmark.png" alt="kt2lua" height="56">
+</p>
+<p align="center">
+  <img src="https://img.shields.io/badge/kotlin-2.3.0-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin 2.3.0">
+  <img src="https://img.shields.io/badge/lua-5.1-2C2D72?logo=lua&logoColor=white" alt="Lua 5.1">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license">
+  <!-- compat-badge:start --><img src="https://img.shields.io/badge/stdlib%20coverage-50%25-yellow" alt="Kotlin stdlib coverage"><!-- compat-badge:end -->
 </p>
 
 kt2lua transpiles a small subset of Kotlin into Lua 5.1, and ships its own Lua
@@ -54,6 +60,58 @@ Output formatting follows the
 [luarocks Lua style guide](https://github.com/luarocks/lua-style-guide) by default; drop a
 `kt2lua-style.properties` file next to your project to override it (auto-detected, no flag
 needed).
+
+## Lua compatibility
+
+Generated output targets **Lua 5.1** syntax and semantics. The `build` CI job runs exclusively
+against the interpreter this repo bundles — there's no step anywhere that installs or runs a
+real standalone Lua/LuaJIT binary, so "tested" below means "verified against the bundled
+interpreter," not against the real thing.
+
+| Lua version | Status | Notes |
+| --- | --- | --- |
+| 5.1 | ✅ Yes | The actual target. Verified via the bundled interpreter in `test-runner`. |
+| LuaJIT | ✅ Should work | LuaJIT's default syntax is Lua 5.1-compatible, which is everything this transpiler emits. Not independently verified against a real LuaJIT binary. |
+| 5.2 | ✅ Should work | Lua 5.2 keeps the global `unpack()` as a deprecated compatibility alias, which is what this transpiler emits for a spread argument (`*xs`). Not independently verified. |
+| 5.3 | ⚠️ No, unless the host provides `unpack` | Everything emitted is 5.3-compatible *except* spread arguments (`*xs`), which compile to the global `unpack(...)` — removed in 5.3. Works if your host environment defines a global `unpack` alias (common in embedding engines); fails otherwise. Avoid spread arguments if you need plain 5.3. |
+| 5.4 | ⚠️ No, unless the host provides `unpack` | Same caveat as 5.3. |
+
+If you hit the `unpack` issue on 5.3/5.4, add this once in your Lua environment before running
+generated code:
+
+```lua
+unpack = unpack or table.unpack
+```
+
+## Kotlin stdlib compatibility
+
+Per-package progress against the real Kotlin stdlib, generated from the compatibility manifests
+under `transpiler/src/main/resources/compatibility/kotlin-stdlib` (`kt2lua compat report table`)
+and kept in sync on every push to `main` — don't hand-edit the table below, it'll be overwritten.
+See the [tracking issue](https://github.com/Mark7625/kt2lua/issues/3) for exactly which
+declarations are still partial/unsupported per package, or run `kt2lua compat status <name>`
+locally.
+
+<!-- compat-report:start -->
+| Package | Done | Partial | Left | % Complete |
+|---|---|---|---|---|
+| [kotlin](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/) | 8/43 | 21 | 14 | 18% |
+| [kotlin.collections](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/) | 110/129 | 19 | 0 | 85% |
+| [kotlin.enums](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.enums/) | 0/2 | 0 | 2 | 0% |
+| [kotlin.io](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.io/) | 0/13 | 2 | 11 | 0% |
+| [kotlin.io.path](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.io.path/) | 0/7 | 0 | 7 | 0% |
+| [kotlin.math](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.math/) | 2/20 | 2 | 16 | 10% |
+| [kotlin.random](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.random/) | 0/5 | 0 | 5 | 0% |
+| [kotlin.ranges](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.ranges/) | 0/6 | 4 | 2 | 0% |
+| [kotlin.sequences](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.sequences/) | 22/26 | 4 | 0 | 84% |
+| [kotlin.streams](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.streams/) | 0/2 | 0 | 2 | 0% |
+| [kotlin.system](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.system/) | 0/4 | 0 | 4 | 0% |
+| [kotlin.text](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.text/) | 5/29 | 1 | 23 | 17% |
+| [kotlin.time](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/) | 0/6 | 0 | 6 | 0% |
+| **Total** | **147/292** | **53** | **92** | **50%** |
+
+_Done = fully implemented; Partial = implemented with a real caveat, not counted toward % Complete; Left = not started at all. See the tracking issue for exactly what each partial entry is missing._
+<!-- compat-report:end -->
 
 ## Layout
 
