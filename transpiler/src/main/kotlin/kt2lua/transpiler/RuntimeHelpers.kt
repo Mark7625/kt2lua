@@ -14,7 +14,9 @@ enum class RuntimeHelper(resource: String) {
     MATH_FLOAT("math_float"),
     MATH_PRECISE("math_precise"),
     RANDOM("random"),
-    TIME("time");
+    TIME("time"),
+    TIME_SOURCE("time_source"),
+    TIME_INSTANT("time_instant");
 
     val source: String = loadRuntimeSource(resource)
 }

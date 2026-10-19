@@ -209,6 +209,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     override fun isNativeClass(className: String): Boolean = types.classInfo(className)?.native != false
     override fun useRuntimeHelper(helper: RuntimeHelper) {
         usedRuntimeHelpers += helper
+        if (helper == RuntimeHelper.TIME_SOURCE || helper == RuntimeHelper.TIME_INSTANT) usedRuntimeHelpers += RuntimeHelper.TIME
     }
     private val indentUnit = style.indentUnit
     private var out = StringBuilder()
@@ -1187,7 +1188,13 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         if (name == "self") return types.currentReceiver() ?: name
         objectMemberPrefix(name, objectVars)?.let { return "$it.$name" }
         TIME_COMPANIONS[name]?.takeIf { types.classInfo(name)?.native != false && types.env.lookup(name) == null && objectMemberPrefix(name, objectVars) == null }?.let {
-            useRuntimeHelper(RuntimeHelper.TIME)
+            useRuntimeHelper(
+                when (name) {
+                    "Instant", "Clock" -> RuntimeHelper.TIME_INSTANT
+                    "TimeSource" -> RuntimeHelper.TIME_SOURCE
+                    else -> RuntimeHelper.TIME
+                },
+            )
             return it
         }
         if (isDefaultRandom(Identifier(name))) {
@@ -2495,7 +2502,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
 
     private fun emitCall(expr: CallExpr): String {
         if (expr.callee == "TestTimeSource" && expr.args.isEmpty() && types.classInfo("TestTimeSource")?.native != false && !types.isUserFunction("TestTimeSource")) {
-            useRuntimeHelper(RuntimeHelper.TIME)
+            useRuntimeHelper(RuntimeHelper.TIME_SOURCE)
             return "__TestTimeSource.new()"
         }
         if ((expr.callee == "measureTime" || expr.callee == "measureTimedValue") && expr.args.size == 1 && !types.isUserFunction(expr.callee)) {

@@ -12,7 +12,7 @@ import kt2lua.transpiler.RuntimeHelper
  */
 object ClassEmitter {
     fun emitClassDecl(decl: ClassDecl, ctx: EmitContext) {
-        if (decl.superClass == "AbstractLongTimeSource" || decl.superClass == "AbstractDoubleTimeSource") ctx.useRuntimeHelper(RuntimeHelper.TIME)
+        if (decl.superClass == "AbstractLongTimeSource" || decl.superClass == "AbstractDoubleTimeSource") ctx.useRuntimeHelper(RuntimeHelper.TIME_SOURCE)
         if (decl.superClass != null) {
             ctx.line("${decl.name} = setmetatable({}, { __index = ${decl.superClass} })")
         } else {
