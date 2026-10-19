@@ -79,9 +79,17 @@ object CompatibilityReport {
             appendLine("<details>")
             appendLine("<summary>${s.packageName} — ${s.percentComplete}% has some implementation (${s.partial} partial, ${s.unsupported} not started)</summary>")
             appendLine()
-            for (entry in remaining) {
+            val (bare, detailed) = remaining.partition { it.status == CompatibilityStatus.UNSUPPORTED && it.limitations.isEmpty() }
+            for (entry in detailed) {
                 val tag = if (entry.status == CompatibilityStatus.PARTIAL) "partial" else "unsupported"
                 appendLine("- [ ] `${entry.id}` _(${tag})_" + (entry.limitations.firstOrNull()?.let { " — $it" } ?: ""))
+            }
+            if (bare.isNotEmpty()) {
+                // Entries with nothing to say beyond "not started" share one line, which keeps the body
+                // under GitHub's 65,536-character issue limit now that the manifests list every name.
+                val names = bare.map { it.name }.distinct().sorted()
+                if (detailed.isNotEmpty()) appendLine()
+                appendLine("Not started (${names.size}): " + names.joinToString(", ") { "`$it`" })
             }
             appendLine()
             appendLine("</details>")

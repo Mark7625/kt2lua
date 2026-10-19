@@ -107,6 +107,20 @@ class CompatibilityReportTest {
     }
 
     @Test
+    fun `unsupported declarations with no notes are grouped onto one line`() {
+        val registry = CompatibilityRegistry.from(listOf(
+            manifestWith(
+                "kotlin.foo",
+                DeclarationEntry(fooId, "a", "function", CompatibilityStatus.UNSUPPORTED),
+                DeclarationEntry(barId, "b", "function", CompatibilityStatus.UNSUPPORTED),
+            ),
+        ))
+        val body = CompatibilityReport.issueBody(registry, CompatibilityReport.packageStats(registry))
+        assertTrue(body.contains("Not started (2): `a`, `b`"))
+        assertFalse(body.contains("- [ ]"))
+    }
+
+    @Test
     fun `a package where everything is fully supported gets no spoiler section at all`() {
         val registry = CompatibilityRegistry.from(listOf(manifestWith(
             "kotlin.foo",

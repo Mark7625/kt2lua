@@ -8,6 +8,12 @@
     {"id": "kotlin.random.Random.nextInt()", "name": "nextInt", "kind": "function", "receiver": "Random", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Full Int range; seeded instances match Kotlin bit for bit"},
     {"id": "kotlin.random.Random.nextInt(Int, Int)", "name": "nextInt", "kind": "function", "receiver": "Random", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "from inclusive, until exclusive; also covers nextInt(until)"},
     {"id": "kotlin.random.Random.nextDouble()", "name": "nextDouble", "kind": "function", "receiver": "Random", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "[0, 1); also covers nextDouble(until) and nextDouble(from, until)"},
-    {"id": "kotlin.random.Random.nextBoolean()", "name": "nextBoolean", "kind": "function", "receiver": "Random", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Seeded instances match Kotlin"}
+    {"id": "kotlin.random.Random.nextBoolean()", "name": "nextBoolean", "kind": "function", "receiver": "Random", "status": "supported", "implementation": "Emitter.emitMethodCallTarget", "documentation": "Seeded instances match Kotlin"},
+    {"id": "kotlin.random.asJavaRandom(*)", "name": "asJavaRandom", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.random.asKotlinRandom(*)", "name": "asKotlinRandom", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.random.nextLong(*)", "name": "nextLong", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.random.nextUBytes(*)", "name": "nextUBytes", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.random.nextUInt(*)", "name": "nextUInt", "kind": "function", "status": "unsupported"},
+    {"id": "kotlin.random.nextULong(*)", "name": "nextULong", "kind": "function", "status": "unsupported"}
   ]
 }
