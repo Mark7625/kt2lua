@@ -15,6 +15,6 @@ class WhileFeature : StatementParser {
         ctx.expect(TokenType.LPAREN)
         val cond = ctx.parseExpression()
         ctx.expect(TokenType.RPAREN)
-        return WhileStatement(cond, ctx.parseBlock())
+        return WhileStatement(cond, ctx.parseBranch())
     }
 }

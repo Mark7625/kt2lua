@@ -203,9 +203,10 @@ class EmitterTest {
     }
 
     @Test
-    fun `data class with its own toString does not get an auto-generated one`() {
+    fun `data class with its own toString delegates __tostring to it instead of auto-generating one`() {
         val code = emit("""data class Tag(val label: String) { fun toString(): String = "custom" }""")
-        assertTrue(!code.contains("__tostring"))
+        assertTrue(code.contains("Tag.__tostring = function(self) return self:toString() end"))
+        assertTrue(!code.contains("Tag(label="))
     }
 
     @Test
@@ -219,9 +220,9 @@ class EmitterTest {
     }
 
     @Test
-    fun `numeric cast methods are no-ops and toString maps to the Lua stdlib`() {
+    fun `toDouble keeps the value but formats as a double, and toString maps to the Lua stdlib`() {
         val code = emit("fun main() { val x = 5; println(x.toDouble()); println(x.toString()) }")
-        assertTrue(code.contains("print(x)"))
+        assertTrue(code.contains("print(__fmtDouble(x))"))
         assertTrue(code.contains("print(tostring(x))"))
     }
 
@@ -365,22 +366,22 @@ class EmitterTest {
     @Test
     fun `try-catch compiles to pcall with the error bound in an if-not-ok block`() {
         val code = emit("fun main() { try { risky() } catch (e: Exception) { println(e) } }")
-        assertTrue(code.contains("local __ok, __err = pcall(function()"))
+        assertTrue(code.contains("local __ok, __err, __val = pcall(function()"))
         assertTrue(code.contains("if not __ok then"))
-        assertTrue(code.contains("local e = __err"))
+        assertTrue(code.contains("local e = __exception(__caught)"))
     }
 
     @Test
     fun `try-finally with no catch re-raises after finally runs`() {
         val code = emit("fun main() { try { risky() } finally { cleanup() } }")
         assertTrue(code.contains("cleanup()"))
-        assertTrue(code.contains("if not __ok then error(__err) end"))
+        assertTrue(code.contains("if not __ok then error(__err, 0) end"))
     }
 
     @Test
     fun `throw with a single string arg extracts just the message`() {
         val code = emit("""fun main() { throw IllegalStateException("bad") }""")
-        assertTrue(code.contains("error(\"bad\")"))
+        assertTrue(code.contains("error(\"bad\", 0)"))
         assertTrue(!code.contains("IllegalStateException"))
     }
 
@@ -391,7 +392,7 @@ class EmitterTest {
             |fun main() { throw MyError("bad") }
             """.trimMargin()
         )
-        assertTrue(code.contains("error(MyError.new(\"bad\"))"))
+        assertTrue(code.contains("error(MyError.new(\"bad\"), 0)"))
     }
 
     @Test

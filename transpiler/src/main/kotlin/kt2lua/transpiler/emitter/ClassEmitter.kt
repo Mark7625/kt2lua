@@ -37,6 +37,9 @@ object ClassEmitter {
             if (ctx.style.blankLineBeforeDeclarations) ctx.line("")
             emitClassMethod(decl.name, m, ctx)
         }
+        if (ctx.types.classInfo(decl.name)?.hasToString == true) {
+            ctx.line("${decl.name}.__tostring = function(self) return self:toString() end")
+        }
         ctx.emitSubscriptions(decl)
     }
 

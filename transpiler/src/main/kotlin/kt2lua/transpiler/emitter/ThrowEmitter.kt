@@ -17,6 +17,6 @@ object ThrowEmitter {
         } else {
             thrown
         }
-        ctx.line("error(${ctx.emitExpression(messageExpr)})")
+        ctx.line("error(${ctx.emitExpression(messageExpr)}, 0)")
     }
 }

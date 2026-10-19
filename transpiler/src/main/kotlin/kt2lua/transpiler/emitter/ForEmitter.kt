@@ -12,7 +12,11 @@ object ForEmitter {
     fun emitForStatement(stmt: ForStatement, ctx: EmitContext) {
         val startStr = ctx.emitExpression(stmt.start)
         val limitStr = if (stmt.inclusive) ctx.emitExpression(stmt.end) else "(${ctx.emitExpression(stmt.end)} - 1)"
-        val stepStr = stmt.step?.let { ctx.emitExpression(it) }
+        val stepStr = when {
+            stmt.descending && stmt.step != null -> "-(${ctx.emitExpression(stmt.step!!)})"
+            stmt.descending -> "-1"
+            else -> stmt.step?.let { ctx.emitExpression(it) }
+        }
         val header = if (stepStr != null) {
             "for ${stmt.varName} = $startStr, $limitStr, $stepStr do"
         } else {

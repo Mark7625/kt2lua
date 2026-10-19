@@ -8,9 +8,11 @@ import kt2lua.transpiler.ObjectDecl
 object ObjectEmitter {
     fun emitObjectDecl(decl: ObjectDecl, ctx: EmitContext) {
         ctx.line("${decl.name} = {}")
-        decl.body.forEachIndexed { i, stmt ->
-            if (i > 0 && ctx.isDeclBoundary(stmt)) ctx.line("")
-            ctx.emitModuleMember(stmt, decl.name)
+        ctx.withObjectScope(decl) {
+            decl.body.forEachIndexed { i, stmt ->
+                if (i > 0 && ctx.isDeclBoundary(stmt)) ctx.line("")
+                ctx.emitModuleMember(stmt, decl.name)
+            }
         }
     }
 }

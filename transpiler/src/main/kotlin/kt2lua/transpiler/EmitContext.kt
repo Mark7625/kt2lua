@@ -31,4 +31,15 @@ interface EmitContext {
     fun emitModuleMember(stmt: Statement, moduleVar: String)
 
     fun useRuntimeHelper(helper: RuntimeHelper)
+
+    /** Runs [block] (which emits [decl]'s body) with the object's own non-private members
+     * resolving to `Name.member` rather than to the plain locals they're also mirrored from, so
+     * a mutation made by one member function is visible to every other reader. */
+    fun withObjectScope(decl: ObjectDecl, block: () -> Unit)
+
+    /** True while emitting directly inside a `try` body/`catch` body closure: a Kotlin `return`
+     * there has to be reported back to the surrounding function as `return true, value` instead
+     * of just ending the pcall'd closure. [tryReturnSeen] records that one was emitted. */
+    var insideTryClosure: Boolean
+    var tryReturnSeen: Boolean
 }

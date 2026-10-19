@@ -11,4 +11,6 @@ fun main() {
     println(numbers.min())
     println(numbers.max())
     println(numbers.minByOrNull { -it })
+    println(listOf(1, 2, 3).count())
+    println(setOf(1, 2).count())
 }

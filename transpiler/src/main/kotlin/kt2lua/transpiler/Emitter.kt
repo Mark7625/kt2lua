@@ -209,6 +209,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         types.registerExternalClass("Set", ClassInfo(emptyList(), emptySet(), false, propertyTypes = mapOf("size" to "Int"), native = true))
         types.registerExternalClass("Map", ClassInfo(emptyList(), emptySet(), false, propertyTypes = mapOf("size" to "Int"), native = true))
         types.registerExternalClass("Sequence", ClassInfo(emptyList(), emptySet(), false, native = true))
+        types.registerExternalClass("Pair", ClassInfo(emptyList(), emptySet(), false, native = true))
         for ((name, info) in externalClasses) types.registerExternalClass(name, info)
         types.collectSignatures(program.body)
         val hasMain = program.body.any { it is FunctionDecl && it.name == "main" }
@@ -239,7 +240,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         when {
             stmt is FunctionDecl && stmt.isPrivate -> emitFunctionDecl(stmt)
             stmt is FunctionDecl -> emitModuleFunctionDecl(stmt, moduleVar)
-            stmt is VariableDecl -> emitTopLevelVariableDecl(stmt, moduleVar)
+            stmt is VariableDecl -> {
+                emitTopLevelVariableDecl(stmt, moduleVar)
+                if (objectName != null) types.instanceClassOf(stmt.name)?.let { objectMemberClasses["$moduleVar.${stmt.name}"] = it }
+            }
             else -> emitStatement(stmt)
         }
     }
@@ -325,7 +329,15 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                 val callable = stmt.expr is CallExpr || stmt.expr is MethodCallExpr || stmt.expr is SafeChainExpr || stmt.expr is NotNullAssertExpr
                 line(if (!callable) "do local __discard = $code end" else if (code.startsWith("(")) ";$code" else code)
             }
-            is ReturnStatement -> line(stmt.expr?.let { "return ${emitExpression(it)}" } ?: "return")
+            is ReturnStatement -> {
+                val value = stmt.expr?.let { emitExpression(it) }
+                if (insideTryClosure) {
+                    tryReturnSeen = true
+                    line(if (value != null) "return true, $value" else "return true")
+                } else {
+                    line(if (value != null) "return $value" else "return")
+                }
+            }
             is IfStatement -> IfEmitter.emitIfStatement(stmt, this)
             is WhenStatement -> WhenEmitter.emitWhenStatement(stmt, this)
             is ForStatement -> ForEmitter.emitForStatement(stmt, this)
@@ -362,18 +374,66 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         types.popScope()
     }
 
+    private val objectMemberClasses = mutableMapOf<String, String>()
+    private var objectName: String? = null
+    private var objectVars: Set<String> = emptySet()
+    private var objectFuns: Set<String> = emptySet()
+    private var objectScopeIndex: Int = -1
+
+    override fun withObjectScope(decl: ObjectDecl, block: () -> Unit) {
+        val saved = listOf(objectName, objectVars, objectFuns, objectScopeIndex)
+        types.pushScope()
+        objectName = decl.name
+        objectVars = decl.body.filterIsInstance<VariableDecl>().filter { !it.isPrivate }.mapTo(mutableSetOf()) { it.name }
+        objectFuns = decl.body.filterIsInstance<FunctionDecl>().filter { !it.isPrivate }.mapTo(mutableSetOf()) { it.name }
+        objectScopeIndex = types.env.currentScopeIndex
+        block()
+        types.popScope()
+        @Suppress("UNCHECKED_CAST")
+        objectName = saved[0] as String?
+        @Suppress("UNCHECKED_CAST")
+        objectVars = saved[1] as Set<String>
+        @Suppress("UNCHECKED_CAST")
+        objectFuns = saved[2] as Set<String>
+        objectScopeIndex = saved[3] as Int
+    }
+
+    private fun objectMemberPrefix(name: String, vars: Set<String>): String? {
+        val obj = objectName ?: return null
+        if (name !in vars) return null
+        val declaredAt = types.env.declaredScopeIndex(name)
+        return if (declaredAt == -1 || declaredAt == objectScopeIndex) obj else null
+    }
+
+    override var insideTryClosure: Boolean = false
+    override var tryReturnSeen: Boolean = false
+
     override fun emitFunctionBody(fn: FunctionDecl) {
+        val savedInsideTry = insideTryClosure
+        insideTryClosure = false
         fn.params.firstOrNull { it.isVararg }?.let { line("local ${it.name} = {...}") }
+        for (p in fn.params) {
+            p.default?.let { line("if ${p.name} == nil then ${p.name} = ${emitExpression(it)} end") }
+        }
         when (val body = fn.body) {
             is ExprBody -> line("return ${emitExpression(body.expr)}")
             is BlockBody -> body.block.body.forEach { emitStatement(it) }
         }
+        insideTryClosure = savedInsideTry
     }
 
     private val NUMERIC_CAST_NAMES = setOf("toDouble", "toInt", "toFloat", "toLong", "toShort", "toByte")
 
     private fun emitMethodCallTarget(expr: MethodCallExpr): String {
-        if (expr.args.isEmpty() && expr.methodName in NUMERIC_CAST_NAMES) return emitExpression(expr.obj)
+        if (expr.methodName == "invoke" && !hasDeclaredMethod(expr) && receiverInstanceClass(expr.obj) == null) {
+            return "${emitExpression(expr.obj)}(${emitArgList(expr.args)})"
+        }
+        if (expr.args.isEmpty() && expr.methodName in NUMERIC_CAST_NAMES) {
+            val inner = emitExpression(expr.obj)
+            if (expr.methodName in setOf("toDouble", "toFloat") || types.inferExprType(expr.obj) == TypeName.INT) return inner
+            useRuntimeHelper(RuntimeHelper.TO_INT)
+            return "__toInt($inner)"
+        }
         if (expr.args.isEmpty() && expr.methodName == "toString") return formatForToString(expr.obj, emitExpression(expr.obj))
         if (expr.args.isEmpty() && expr.methodName == "hashCode") return emitHashCodeExpr(expr.obj)
         val receiverPath = expressionPath(expr.obj)
@@ -435,6 +495,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         }
         if (collClass == "Set") {
             val receiverStr = emitExpression(expr.obj)
+            if (expr.methodName == "count" && expr.args.isEmpty()) return "(#$receiverStr.list)"
             if (expr.methodName == "isEmpty" && expr.args.isEmpty()) return "(#$receiverStr.list == 0)"
             if (expr.methodName == "isNotEmpty" && expr.args.isEmpty()) return "(#$receiverStr.list ~= 0)"
             if (expr.methodName in mutationMethodNames.getValue("Set")) {
@@ -462,6 +523,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                 val valueStr = emitExpression(valueExpr)
                 return "(function() local __r = $receiverStr for _, __k in ipairs(__r.keys) do if ${structuralEq(valueExpr, "__r.map[__k]", valueStr)} then return true end end return false end)()"
             }
+            if (expr.methodName == "count" && expr.args.isEmpty()) return "(#$receiverStr.keys)"
             if (expr.methodName == "isEmpty" && expr.args.isEmpty()) return "(#$receiverStr.keys == 0)"
             if (expr.methodName == "isNotEmpty" && expr.args.isEmpty()) return "(#$receiverStr.keys ~= 0)"
             if (expr.methodName in mutationMethodNames.getValue("Map")) {
@@ -509,6 +571,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         }
         if (collClass == "List") {
             val receiverStr = emitExpression(expr.obj)
+            if (expr.methodName == "count" && expr.args.isEmpty()) return "(#$receiverStr)"
             if (expr.methodName == "get" && expr.args.size == 1) {
                 useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
                 return "__nilDecode($receiverStr[(${emitExpression(expr.args[0].toExpression())}) + 1])"
@@ -662,6 +725,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     }
 
     private fun instanceClassOfExpr(expr: Expression): String? = when (expr) {
+        is ToPairExpr -> "Pair"
+        is IndexExpr -> (expr.obj as? Identifier)?.takeIf { instanceClassOfExpr(it) == "List" }?.let { types.listElementClassOf(it.name) }
         is StringTemplateLiteral -> "String"
         is Identifier -> {
             val resolvedName = if (expr.name == "self") types.currentReceiver() ?: "self" else expr.name
@@ -670,9 +735,10 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
                     types.instanceClassOf(receiver)?.let { types.classInfo(it)?.propertyTypes?.get(expr.name) }
                 }
         }
-        is PropertyAccessExpr -> expressionPath(expr)?.let { bindings.global(it) }
+        is PropertyAccessExpr -> expressionPath(expr)?.let { objectMemberClasses[it] ?: bindings.global(it) }
             ?: receiverInstanceClass(expr.obj)?.let { receiver ->
-                if (types.classInfo(receiver)?.native == true) bindings.property(receiver, expr.name)
+                if (receiver == "Map" && expr.name in setOf("keys", "values", "entries")) "List"
+                else if (types.classInfo(receiver)?.native == true) bindings.property(receiver, expr.name)
                 else types.classInfo(receiver)?.propertyTypes?.get(expr.name)
             }
         is ParenExpr -> instanceClassOfExpr(expr.expr)
@@ -817,10 +883,15 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         } else if (binOp == "%") {
             usedRuntimeHelpers += RuntimeHelper.MOD
             line("$targetStr = __mod($targetStr, $rhsStr)")
+        } else if (binOp == "+" && (targetType == TypeName.STRING || types.inferExprType(stmt.expr) == TypeName.STRING)) {
+            line("$targetStr = ${concatOperand(Identifier(""), targetStr, forceString = targetType == TypeName.STRING)} .. ${concatOperand(stmt.expr, rhsStr)}")
         } else {
             line("$targetStr = $targetStr $binOp ($rhsStr)")
         }
     }
+
+    private fun concatOperand(expr: Expression, str: String, forceString: Boolean = false): String =
+        if (forceString || types.inferExprType(expr) == TypeName.STRING) str else formatForToString(expr, str)
 
     private fun emitAssignTarget(target: AssignTarget): String = when (target) {
         is NameTarget -> emitIdentifier(target.name)
@@ -865,6 +936,12 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     }
 
     private fun emitPropertyAccess(receiver: Expression, name: String): String {
+        if (receiver is Identifier && receiver.name == "Int" && types.env.lookup("Int") == null) {
+            when (name) {
+                "MAX_VALUE" -> return "2147483647"
+                "MIN_VALUE" -> return "(-2147483648)"
+            }
+        }
         if (receiverInstanceClass(receiver) == "Map" && name in setOf("keys", "values", "entries")) {
             val receiverStr = emitExpression(receiver)
             return when (name) {
@@ -887,6 +964,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
 
     private fun emitIdentifier(name: String): String {
         if (name == "self") return types.currentReceiver() ?: name
+        objectMemberPrefix(name, objectVars)?.let { return "$it.$name" }
         types.memberReceiver(name)?.let { receiver ->
             val className = types.instanceClassOf(receiver)
             val hostName = className?.takeIf { types.classInfo(it)?.native == true }?.let { bindings.propertyName(it, name) } ?: name
@@ -926,6 +1004,8 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
 
         val savedOut = out
         val savedIndent = indentLevel
+        val savedInsideTry = insideTryClosure
+        insideTryClosure = false
         out = StringBuilder()
         indentLevel = savedIndent + 1
         val stmts = expr.body.body
@@ -937,6 +1017,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         val bodyLua = out.toString()
         out = savedOut
         indentLevel = savedIndent
+        insideTryClosure = savedInsideTry
 
         types.popScope()
         return "function(${paramNames.joinToString(", ")})\n${bodyLua}${indentUnit.repeat(savedIndent)}end"
@@ -1538,7 +1619,11 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
             "+" -> when (receiverInstanceClass(expr.left)) {
                 "List" -> emitListPlusExpr(leftStr, expr.right, rightStr)
                 "Set" -> emitSetPlusMinusExpr(leftStr, expr.right, rightStr, removing = false)
-                else -> "($leftStr + $rightStr)"
+                else -> if (types.inferExprType(expr.left) == TypeName.STRING || types.inferExprType(expr.right) == TypeName.STRING) {
+                    "(${concatOperand(expr.left, leftStr)} .. ${concatOperand(expr.right, rightStr)})"
+                } else {
+                    "($leftStr + $rightStr)"
+                }
             }
             "-" -> when (receiverInstanceClass(expr.left)) {
                 "List" -> emitListMinusExpr(leftStr, expr.right, rightStr)
@@ -1564,6 +1649,21 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     }
 
     private fun emitCall(expr: CallExpr): String {
+        if (expr.args.any { it is NamedArg } && types.classInfo(expr.callee) == null) {
+            types.functionParamNames(expr.callee)?.let { names ->
+                val positional = expr.args.takeWhile { it !is NamedArg }
+                val named = expr.args.drop(positional.size).filterIsInstance<NamedArg>().associateBy { it.name }
+                val rest = names.drop(positional.size).map { name ->
+                    PositionalArg(named[name]?.expr ?: NullLiteral.takeIf { name in types.functionDefaultedParams(expr.callee) }
+                        ?: error("Missing argument '$name' in call to ${expr.callee}"))
+                }
+                return emitCall(expr.copy(args = positional + rest))
+            }
+        }
+        objectMemberPrefix(expr.callee, objectFuns)?.let { return "$it.${expr.callee}(${emitArgList(expr.args)})" }
+        if (expr.callee == "Pair" && expr.args.size == 2 && types.classInfo("Pair")?.native != false && expr.args.all { it is PositionalArg }) {
+            return emitExpression(ToPairExpr(expr.args[0].toExpression(), expr.args[1].toExpression()))
+        }
         types.memberReceiver(expr.callee)?.let { receiver ->
             val className = types.instanceClassOf(receiver)
             val info = className?.let { types.classInfo(it) }
@@ -1688,22 +1788,48 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         return if (fragments.size == 1) fragments[0] else fragments.joinToString(" .. ")
     }
 
-    private fun emitCollectionToStringExpr(className: String, receiverStr: String): String = when (className) {
-        "Set" -> "(\"[\" .. table.concat((function() local __p = {} for _, __v in ipairs($receiverStr.list) do table.insert(__p, tostring(__v)) end return __p end)(), \", \") .. \"]\")"
-        "Map" -> "(\"{\" .. table.concat((function() local __r = $receiverStr local __p = {} for _, __k in ipairs(__r.keys) do table.insert(__p, tostring(__k) .. \"=\" .. tostring(__r.map[__k])) end return __p end)(), \", \") .. \"}\")"
-        else -> {
-            useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
-            "(\"[\" .. table.concat((function() local __p = {} for _, __v in ipairs($receiverStr) do table.insert(__p, tostring(__nilDecode(__v))) end return __p end)(), \", \") .. \"]\")"
+    private fun emitCollectionToStringExpr(className: String, receiverStr: String): String {
+        useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
+        useRuntimeHelper(RuntimeHelper.FMT_VALUE)
+        return when (className) {
+            "Set" -> "(\"[\" .. table.concat((function() local __p = {} for _, __v in ipairs($receiverStr.list) do table.insert(__p, __fmt(__v)) end return __p end)(), \", \") .. \"]\")"
+            "Map" -> "(\"{\" .. table.concat((function() local __r = $receiverStr local __p = {} for _, __k in ipairs(__r.keys) do table.insert(__p, __fmt(__k) .. \"=\" .. __fmt(__r.map[__k])) end return __p end)(), \", \") .. \"}\")"
+            else -> "(\"[\" .. table.concat((function() local __p = {} for _, __v in ipairs($receiverStr) do table.insert(__p, __fmt(__v)) end return __p end)(), \", \") .. \"]\")"
         }
     }
 
     private fun formatForToString(expr: Expression, exprStr: String): String {
         val className = receiverInstanceClass(expr)
-        return if (className != null && className in setOf("List", "Set", "Map")) emitCollectionToStringExpr(className, exprStr) else "tostring($exprStr)"
+        if (className != null && className in setOf("List", "Set", "Map")) return emitCollectionToStringExpr(className, exprStr)
+        if (isPairValued(expr)) return pairFormatted(exprStr)
+        return if (isDoubleTyped(expr)) doubleFormatted(exprStr) else "tostring($exprStr)"
     }
 
     private fun collectionAwareOrPlain(expr: Expression, exprStr: String): String {
         val className = receiverInstanceClass(expr)
-        return if (className != null && className in setOf("List", "Set", "Map")) emitCollectionToStringExpr(className, exprStr) else exprStr
+        if (className != null && className in setOf("List", "Set", "Map")) return emitCollectionToStringExpr(className, exprStr)
+        if (isPairValued(expr)) return pairFormatted(exprStr)
+        return if (isDoubleTyped(expr)) doubleFormatted(exprStr) else exprStr
+    }
+
+    private fun isPairValued(expr: Expression): Boolean = when (expr) {
+        is ToPairExpr -> true
+        is ParenExpr -> isPairValued(expr.expr)
+        is MethodCallExpr -> expr.methodName == "partition" || receiverInstanceClass(expr) == "Pair"
+        is CallExpr -> expr.callee == "Pair"
+        else -> receiverInstanceClass(expr) == "Pair"
+    }
+
+    private fun pairFormatted(exprStr: String): String {
+        useRuntimeHelper(RuntimeHelper.NULL_SENTINEL)
+        useRuntimeHelper(RuntimeHelper.FMT_VALUE)
+        return "__fmt($exprStr)"
+    }
+
+    private fun isDoubleTyped(expr: Expression): Boolean = types.inferExprType(expr) == TypeName.DOUBLE
+
+    private fun doubleFormatted(exprStr: String): String {
+        useRuntimeHelper(RuntimeHelper.FMT_DOUBLE)
+        return "__fmtDouble($exprStr)"
     }
 }

@@ -84,7 +84,7 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
         while (check(TokenType.IDENTIFIER) || check(TokenType.DOT) || check(TokenType.STAR)) advance()
     }
 
-    /** `import a.b.*` (wildcard) is a no-op and returns null. */
+    /** `import a.b.*` (wildcard) and imports from the Kotlin/Java standard libraries are no-ops and return null. */
     private fun parseImportOrNull(): ImportStatement? {
         expect(TokenType.IMPORT)
         val segments = mutableListOf(expectIdentifierName())
@@ -93,6 +93,7 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
             segments.add(expectIdentifierName())
         }
         val alias = if (match(TokenType.AS)) expectIdentifierName() else segments.last()
+        if (segments.first() == "kotlin" || segments.first() == "java") return null
         if (segments.joinToString(".") == "com.mark.runescape.extended.Subscribe") return null
         if (bindings.type(segments.joinToString(".")) != null) return null
         val constantPrefix = segments.joinToString(".") + "."
@@ -191,7 +192,9 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
                 val pname = expectIdentifierName()
                 expect(TokenType.COLON)
                 val rawType = current().text ?: ""
-                params.add(Param(pname, parseTypeName(), rawType, isVararg))
+                val ptype = parseTypeName()
+                val default = if (match(TokenType.ASSIGN)) parseExpression() else null
+                params.add(Param(pname, ptype, rawType, isVararg, default))
             } while (match(TokenType.COMMA))
         }
         expect(TokenType.RPAREN)
@@ -211,6 +214,20 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
     }
 
     override fun parseTypeName(): TypeName {
+        if (check(TokenType.LPAREN)) {
+            // `(Int, Int) -> Int` — a function type: all of it is consumed and the whole thing is
+            // tracked as an untyped value, since a Lua function needs no signature.
+            var depth = 0
+            do {
+                if (check(TokenType.LPAREN)) depth++
+                if (check(TokenType.RPAREN)) depth--
+                advance()
+            } while (depth > 0)
+            expect(TokenType.ARROW)
+            parseTypeName()
+            match(TokenType.QUESTION)
+            return TypeName.ANY
+        }
         val type = normalizeType(expectIdentifierName())
         // `MutableSet<Int>`, `Map<String, Int>`, ... — a type position is never ambiguous with
         // the `<` comparison operator, so these are always skipped unconditionally.
@@ -277,8 +294,12 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
     }
 
     /** `x !in xs` — `!` and `in` as two separate tokens (unlike `!=`), only recognized here in
-     * infix position so it can't be confused with a unary `!` at the start of an operand. */
+     * infix position so it can't be confused with a unary `!` at the start of an operand. A
+     * membership operator starting a new line is never a continuation: in a `when`, it begins the
+     * next branch's `in a..b` condition. */
     private fun matchInOp(): String? {
+        val previous = tokens.getOrNull(cursor.pos - 1)
+        if (previous != null && previous.line < current().line && (check(TokenType.IN) || check(TokenType.NOT))) return null
         if (check(TokenType.NOT) && peekType(1) == TokenType.IN) {
             advance()
             advance()
@@ -339,8 +360,17 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
 
     private fun parsePrimary(): Expression {
         var expr = parseDotChain(parseAtom())
-        while (check(TokenType.LBRACKET)) {
-            expr = parseDotChain(parseIndexSuffix(expr))
+        while (true) {
+            if (check(TokenType.LBRACKET)) {
+                expr = parseDotChain(parseIndexSuffix(expr))
+            } else if (check(TokenType.LPAREN) && cursor.pos > 0 && tokens[cursor.pos - 1].line == current().line &&
+                (expr is CallExpr || expr is MethodCallExpr || expr is IndexExpr || expr is ParenExpr)
+            ) {
+                // `f(x)(y)` / `fs[0](y)` - invoking the value a call/index produced.
+                expr = parseDotChain(MethodCallExpr(expr, "invoke", parseCallArgs()))
+            } else {
+                break
+            }
         }
         while (match(TokenType.NOT_NULL_ASSERT)) {
             expr = parseDotChain(NotNullAssertExpr(expr))

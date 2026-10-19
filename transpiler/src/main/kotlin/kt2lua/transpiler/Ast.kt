@@ -46,7 +46,7 @@ data class ClassDecl(
  * [type] so the emitter can track a class-typed parameter as an instance for colon-call
  * resolution. [isVararg] is only meaningful on a function's last parameter (enforced at parse
  * time) and compiles to Lua's own `...`. */
-data class Param(val name: String, val type: TypeName, val rawType: String = "", val isVararg: Boolean = false)
+data class Param(val name: String, val type: TypeName, val rawType: String = "", val isVararg: Boolean = false, val default: Expression? = null)
 
 sealed class FunctionBody
 data class ExprBody(val expr: Expression) : FunctionBody()
@@ -92,6 +92,7 @@ data class ForStatement(
     val inclusive: Boolean,
     val step: Expression?,
     val body: Block,
+    val descending: Boolean = false,
 ) : Statement()
 /** Anything after `in` that isn't a `..`/`until` range compiles to `for _, x in ipairs(...)` over
  * a List; [varNames] has more than one entry only for a destructured `for ((k, v) in map)`. */
@@ -115,9 +116,8 @@ data class ThrowStatement(val expr: Expression) : Statement()
  * exception-type hierarchy to match against, so [paramType] is parsed and discarded. */
 data class CatchClause(val paramName: String, val body: Block)
 
-/** Compiles to Lua's `pcall`. **Caveat**: the try body runs inside an anonymous function for
- * `pcall` to call, so a bare `return` directly inside it returns from that wrapper, not the
- * enclosing Kotlin function — assign to a variable declared before the `try` instead. */
+/** Compiles to Lua's `pcall`; a `return` inside the try or catch body is propagated to the
+ * enclosing function after `finally` has run. */
 data class TryStatement(val tryBlock: Block, val catch: CatchClause?, val finallyBlock: Block?) : Statement()
 
 /** [InRangeCondition]/[IsTypeCondition] both require a subject (enforced at parse time), and

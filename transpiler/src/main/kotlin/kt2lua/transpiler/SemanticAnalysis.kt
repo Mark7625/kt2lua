@@ -1,6 +1,6 @@
 package kt2lua.transpiler
 
-data class FunctionSig(val params: List<TypeName>, val returnType: TypeName, val rawReturnType: String = "")
+data class FunctionSig(val params: List<TypeName>, val returnType: TypeName, val rawReturnType: String = "", val paramNames: List<String> = emptyList(), val defaultedParams: Set<String> = emptySet())
 
 /** Scoped variable-type lookup — push/pop around each Lua block [Emitter] opens, so a type
  * doesn't leak past the scope it's declared in. */
@@ -11,6 +11,16 @@ class TypeEnv {
     fun declare(name: String, type: TypeName) {
         scopes.last()[name] = type
     }
+
+    /** Index of the nearest scope that declares [name], or -1. */
+    fun declaredScopeIndex(name: String): Int {
+        for (i in scopes.indices.reversed()) {
+            if (name in scopes[i]) return i
+        }
+        return -1
+    }
+
+    val currentScopeIndex: Int get() = scopes.size - 1
 
     fun lookup(name: String): TypeName? {
         for (i in scopes.indices.reversed()) {
@@ -82,6 +92,19 @@ private fun collectionConstructorKind(init: Expression): String {
         else -> ""
     }
 }
+
+/** Only Int/Double are surfaced as a raw type for a class member - every other type name stays
+ * empty so a String/List-typed property isn't mistaken for a tracked class instance. */
+private fun numericRawType(type: TypeName): String = when (type) {
+    TypeName.INT -> "Int"
+    TypeName.DOUBLE -> "Double"
+    else -> ""
+}
+
+private val NUMERIC_CAST_RESULT = mapOf(
+    "toDouble" to TypeName.DOUBLE, "toFloat" to TypeName.DOUBLE,
+    "toInt" to TypeName.INT, "toLong" to TypeName.INT, "toShort" to TypeName.INT, "toByte" to TypeName.INT,
+)
 
 private val BUILTIN_SIGS = mapOf(
     "println" to FunctionSig(emptyList(), TypeName.UNIT),
@@ -163,6 +186,10 @@ class TypeAnalyzer {
 
     fun classInfo(name: String): ClassInfo? = classes[name]
 
+    fun functionDefaultedParams(name: String): Set<String> = functionSigs[name]?.defaultedParams ?: emptySet()
+
+    fun functionParamNames(name: String): List<String>? = functionSigs[name]?.paramNames?.takeIf { it.isNotEmpty() }
+
     /** Pre-registers a class declared in another file of the same [transpileProject] call, so a
      * subclass in this file can still inherit its cross-file superclass's methods. */
     fun registerExternalClass(name: String, info: ClassInfo) {
@@ -189,7 +216,7 @@ class TypeAnalyzer {
             when (stmt) {
                 is FunctionDecl -> {
                     val params = stmt.params.map { it.type }
-                    functionSigs[stmt.name] = FunctionSig(params, resolveReturnType(stmt), rawReturnTypeOf(stmt))
+                    functionSigs[stmt.name] = FunctionSig(params, resolveReturnType(stmt), rawReturnTypeOf(stmt), stmt.params.map { it.name }, stmt.params.filter { it.default != null }.mapTo(mutableSetOf()) { it.name })
                 }
                 is ClassDecl -> {
                     val superInfo = stmt.superClass?.let { classes[it] }
@@ -200,8 +227,12 @@ class TypeAnalyzer {
                         methodReturnTypes = (superInfo?.methodReturnTypes ?: emptyMap()) +
                             stmt.methods.associate { it.name to rawReturnTypeOf(it) },
                         propertyTypes = (superInfo?.propertyTypes ?: emptyMap()) +
-                            stmt.params.associate { it.name to "" } +
-                            stmt.properties.associate { it.name to it.rawType.ifEmpty { collectionConstructorKind(it.init) } },
+                            stmt.params.associate { it.name to numericRawType(it.type) } +
+                            stmt.properties.associate {
+                                it.name to it.rawType.ifEmpty {
+                                    collectionConstructorKind(it.init).ifEmpty { numericRawType(it.varType ?: inferExprType(it.init)) }
+                                }
+                            },
                         superClass = stmt.superClass,
                         isData = stmt.isData,
                     )
@@ -234,8 +265,8 @@ class TypeAnalyzer {
         is UnaryExpr -> if (expr.op == "!") TypeName.BOOLEAN else inferExprType(expr.expr)
         is BinaryExpr -> inferBinaryType(expr)
         is CallExpr -> inferCallType(expr)
-        is PropertyAccessExpr -> TypeName.ANY
-        is MethodCallExpr -> TypeName.ANY
+        is PropertyAccessExpr -> classOfExpr(expr.obj)?.let { classes[it]?.propertyTypes?.get(expr.name) }?.let(::normalizeType) ?: TypeName.ANY
+        is MethodCallExpr -> inferMethodCallType(expr)
         is FunctionRef -> TypeName.ANY
         is IfExpr -> combineBranchTypes(inferExprType(expr.thenExpr), inferExprType(expr.elseExpr))
         is WhenExpr -> {
@@ -249,6 +280,20 @@ class TypeAnalyzer {
         is LambdaExpr -> TypeName.ANY
         is IndexExpr -> TypeName.ANY
         is ToPairExpr -> TypeName.ANY
+    }
+
+    private fun classOfExpr(expr: Expression): String? = when (expr) {
+        is Identifier -> instanceClassOf(expr.name)
+        is ParenExpr -> classOfExpr(expr.expr)
+        is MethodCallExpr -> classOfExpr(expr.obj)?.let { methodReturnClass(it, expr.methodName) }
+        is CallExpr -> if (expr.callee in classes) expr.callee else functionReturnClass(expr.callee)
+        else -> null
+    }
+
+    private fun inferMethodCallType(expr: MethodCallExpr): TypeName {
+        if (expr.args.isEmpty()) NUMERIC_CAST_RESULT[expr.methodName]?.let { return it }
+        val raw = classOfExpr(expr.obj)?.let { classes[it]?.methodReturnTypes?.get(expr.methodName) } ?: return TypeName.ANY
+        return normalizeType(raw)
     }
 
     private fun combineBranchTypes(t1: TypeName, t2: TypeName): TypeName = when {
