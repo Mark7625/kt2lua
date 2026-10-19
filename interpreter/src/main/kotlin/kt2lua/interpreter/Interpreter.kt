@@ -304,12 +304,17 @@ class Interpreter(
     }
 }
 
-/** Parses and runs a Lua source string in one call. */
+/** Parses and runs a Lua source string in one call; returns the exit code (0 unless the script called `os.exit`). */
 fun interpret(
     source: String,
     moduleLoader: ModuleLoader? = null,
     onOutput: (String) -> Unit = { kotlin.io.print(it) },
-) {
+): Int {
     val chunk = LuaParser(LuaLexer(source).tokenize()).parseChunk()
-    Interpreter(onOutput, moduleLoader).run(chunk)
+    return try {
+        Interpreter(onOutput, moduleLoader).run(chunk)
+        0
+    } catch (e: LuaExitException) {
+        e.code
+    }
 }

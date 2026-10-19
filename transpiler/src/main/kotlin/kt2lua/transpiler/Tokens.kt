@@ -31,6 +31,7 @@ data class Token(
     val type: TokenType,
     val text: String? = null,
     val intValue: Int? = null,
+    val longValue: Long? = null,
     val doubleValue: Double? = null,
     val templateParts: List<TemplatePart>? = null,
     val line: Int,

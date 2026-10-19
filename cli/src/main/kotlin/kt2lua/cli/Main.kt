@@ -169,7 +169,8 @@ private fun transpileSingleFile(inputPath: String, outputPath: String?, run: Boo
 
     if (run) {
         try {
-            interpret(result.code)
+            val exitCode = interpret(result.code)
+            if (exitCode != 0) exitProcess(exitCode)
         } catch (e: Exception) {
             System.err.println("kt2lua: ${e.message}")
             exitProcess(1)

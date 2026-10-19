@@ -203,6 +203,8 @@ class TypeAnalyzer {
         classes[name] = info
     }
 
+    fun isUserFunction(name: String): Boolean = name in functionSigs && name !in BUILTIN_SIGS
+
     fun functionReturnClass(name: String): String? = functionSigs[name]?.rawReturnType?.takeIf { it in classes }
 
     fun methodReturnClass(className: String, methodName: String): String? =
@@ -263,6 +265,7 @@ class TypeAnalyzer {
 
     fun inferExprType(expr: Expression): TypeName = when (expr) {
         is IntLiteral -> TypeName.INT
+        is LongLiteral -> TypeName.INT
         is DoubleLiteral -> TypeName.DOUBLE
         is BooleanLiteral -> TypeName.BOOLEAN
         is CharLiteral -> TypeName.CHAR

@@ -337,5 +337,13 @@ private fun installOs(globals: Environment) {
     val os = LuaTable()
     os.rawSet("time", native("time") { System.currentTimeMillis() / 1000.0 })
     os.rawSet("clock", native("clock") { System.nanoTime() / 1_000_000_000.0 })
+    os.rawSet("exit", native("exit") { a ->
+        val code = when (val v = a.getOrNull(0)) {
+            null, true -> 0
+            false -> 1
+            else -> asNumber(v).toInt()
+        }
+        throw LuaExitException(code)
+    })
     globals.define("os", os)
 }

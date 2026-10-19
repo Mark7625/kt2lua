@@ -469,7 +469,7 @@ class Parser(private val tokens: List<Token>, literalConstants: Map<String, Stri
         val tok = current()
         return when (tok.type) {
             TokenType.INT_LITERAL -> {
-                advance(); IntLiteral(tok.intValue!!)
+                advance(); tok.intValue?.let { IntLiteral(it) } ?: LongLiteral(tok.longValue!!)
             }
             TokenType.DOUBLE_LITERAL -> {
                 advance(); DoubleLiteral(tok.doubleValue!!)

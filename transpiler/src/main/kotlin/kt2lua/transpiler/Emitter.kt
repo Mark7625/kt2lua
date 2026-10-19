@@ -1074,6 +1074,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
     override fun emitExpression(expr: Expression): String = when (expr) {
         is IntLiteral -> expr.value.toString()
         is DoubleLiteral -> formatDouble(expr.value)
+        is LongLiteral -> expr.value.toString()
         is CharLiteral -> quoteLuaString(expr.value.toString(), style.quoteStyle)
         is BooleanLiteral -> expr.value.toString()
         NullLiteral -> "nil"
@@ -2430,7 +2431,26 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
         }
     }
 
+    /** kotlin.system: timing and process exit, straight onto os.clock / os.time / os.exit. */
+    private fun emitSystemCall(expr: CallExpr): String? {
+        val a = expr.args.map { it.toExpression() }
+        fun block(e: Expression): String = if (e is LambdaExpr) emitLambda(e, noParams = true) else emitExpression(e)
+        fun timed(scale: String) =
+            "(function(f) local __t = os.clock(); f(); return math.floor((os.clock() - __t) * $scale) end)(${block(a[0])})"
+        return when {
+            a.size == 1 && expr.callee == "measureTimeMillis" -> timed("1000")
+            a.size == 1 && expr.callee == "measureTimeMicros" -> timed("1000000")
+            a.size == 1 && expr.callee == "measureNanoTime" -> timed("1000000000")
+            a.size == 1 && expr.callee == "exitProcess" -> "os.exit(${emitExpression(a[0])})"
+            a.isEmpty() && expr.callee == "getTimeMillis" -> "math.floor(os.time() * 1000)"
+            a.isEmpty() && expr.callee == "getTimeMicros" -> "math.floor(os.time() * 1000000)"
+            a.isEmpty() && expr.callee == "getTimeNanos" -> "math.floor(os.time() * 1000000000)"
+            else -> null
+        }
+    }
+
     private fun emitCall(expr: CallExpr): String {
+        if (!types.isUserFunction(expr.callee)) emitSystemCall(expr)?.let { return it }
         if (expr.callee == "StringBuilder" && expr.args.size <= 1 && types.classInfo("StringBuilder")?.native == true) {
             val initial = expr.args.firstOrNull()?.toExpression()?.takeIf { types.inferExprType(it) != TypeName.INT }
             return "{buf = {${initial?.let { formatForToString(it, emitExpression(it)) } ?: ""}}}"
@@ -2635,7 +2655,7 @@ class Emitter(override val style: EmitStyle = EmitStyle.DEFAULT, private val bin
      * plain identifier/literal is repeated as-is, anything else is passed through a one-off
      * function so it is only evaluated once. No runtime helper is involved either way. */
     private fun inlineOnce(exprs: List<Expression>, strs: List<String>, build: (List<String>) -> String): String {
-        if (exprs.all { it is Identifier || it is IntLiteral || it is DoubleLiteral }) return build(strs)
+        if (exprs.all { it is Identifier || it is IntLiteral || it is LongLiteral || it is DoubleLiteral }) return build(strs)
         val params = listOf("a", "b").take(strs.size)
         return "(function(${params.joinToString(", ")}) return ${build(params)} end)(${strs.joinToString(", ")})"
     }

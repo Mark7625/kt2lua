@@ -152,6 +152,8 @@ fun CallArg.toExpression(): Expression = when (this) {
 
 sealed class Expression
 data class IntLiteral(val value: Int) : Expression()
+/** An integer literal that doesn't fit in an Int (`1000000000000L`); still just a Lua number. */
+data class LongLiteral(val value: Long) : Expression()
 data class DoubleLiteral(val value: Double) : Expression()
 data class BooleanLiteral(val value: Boolean) : Expression()
 

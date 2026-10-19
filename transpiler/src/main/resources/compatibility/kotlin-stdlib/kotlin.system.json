@@ -2,14 +2,14 @@
   "library": "kotlin-stdlib",
   "kotlinVersion": "2.3.0",
   "package": "kotlin.system",
-  "documentation": "Process/timing utilities. measureTimeMillis moved here from kotlin.json where it'd been misclassified earlier (it's a real kotlin.system declaration, not a kotlin package member). All unsupported — none have dedicated codegen.",
+  "documentation": "Timing and process exit map onto Lua's os library: measure* time the block with os.clock (CPU time, the best Lua 5.1 offers), getTime* read os.time (whole seconds in real Lua), exitProcess is os.exit.",
   "declarations": [
-    {"id": "kotlin.system.measureTimeMillis(() -> Unit)", "name": "measureTimeMillis", "kind": "function", "status": "unsupported", "limitations": ["No dedicated codegen and no matching Lua global — compiles to a call to an undefined global, fails at runtime"]},
-    {"id": "kotlin.system.measureNanoTime(() -> Unit)", "name": "measureNanoTime", "kind": "function", "status": "unsupported"},
-    {"id": "kotlin.system.exitProcess(Int)", "name": "exitProcess", "kind": "function", "status": "unsupported", "limitations": ["No dedicated codegen and no matching Lua global"]},
-    {"id": "kotlin.system.getTimeMillis()", "name": "getTimeMillis", "kind": "function", "status": "unsupported"},
-    {"id": "kotlin.system.getTimeMicros(*)", "name": "getTimeMicros", "kind": "function", "status": "unsupported"},
-    {"id": "kotlin.system.getTimeNanos(*)", "name": "getTimeNanos", "kind": "function", "status": "unsupported"},
-    {"id": "kotlin.system.measureTimeMicros(*)", "name": "measureTimeMicros", "kind": "function", "status": "unsupported"}
+    {"id": "kotlin.system.measureTimeMillis(() -> Unit)", "name": "measureTimeMillis", "kind": "function", "status": "supported", "implementation": "Emitter.emitSystemCall", "documentation": "Runs the block and returns the elapsed os.clock time in milliseconds"},
+    {"id": "kotlin.system.measureNanoTime(() -> Unit)", "name": "measureNanoTime", "kind": "function", "status": "supported", "implementation": "Emitter.emitSystemCall", "documentation": "Runs the block and returns the elapsed os.clock time in nanoseconds"},
+    {"id": "kotlin.system.exitProcess(Int)", "name": "exitProcess", "kind": "function", "status": "supported", "implementation": "Emitter.emitSystemCall", "documentation": "os.exit(code)"},
+    {"id": "kotlin.system.getTimeMillis()", "name": "getTimeMillis", "kind": "function", "status": "supported", "implementation": "Emitter.emitSystemCall", "documentation": "math.floor(os.time() * 1000); real Lua only has whole-second resolution"},
+    {"id": "kotlin.system.getTimeMicros(*)", "name": "getTimeMicros", "kind": "function", "status": "supported", "implementation": "Emitter.emitSystemCall", "documentation": "math.floor(os.time() * 1000000); real Lua only has whole-second resolution"},
+    {"id": "kotlin.system.getTimeNanos(*)", "name": "getTimeNanos", "kind": "function", "status": "supported", "implementation": "Emitter.emitSystemCall", "documentation": "math.floor(os.time() * 1000000000); real Lua only has whole-second resolution"},
+    {"id": "kotlin.system.measureTimeMicros(*)", "name": "measureTimeMicros", "kind": "function", "status": "supported", "implementation": "Emitter.emitSystemCall", "documentation": "Runs the block and returns the elapsed os.clock time in microseconds"}
   ]
 }
